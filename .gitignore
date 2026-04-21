@@ -1,0 +1,44 @@
+# ===== ENV =====
+venv/
+env/
+.venv/
+
+# ===== SECRET =====
+.env
+
+# ===== DATA =====
+data/
+*.csv
+!data/sample.csv
+
+# ===== MODEL =====
+*.h5
+*.keras
+*.pt
+*.pth
+*.onnx
+
+# ===== PYTHON CACHE =====
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ===== NOTEBOOK =====
+.ipynb_checkpoints/
+
+# ===== LOG =====
+logs/
+*.log
+
+# ===== IDE =====
+.vscode/
+.idea/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== BUILD =====
+build/
+dist/
+*.egg-info/

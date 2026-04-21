@@ -1,0 +1,64 @@
+==================================================
+   TÀI LIỆU HƯỚNG DẪN TOÀN TẬP VỀ APACHE AIRFLOW
+==================================================
+
+1. Apache Airflow là gì?
+Apache Airflow là một nền tảng mã nguồn mở (được phát triển bởi Airbnb) dùng để LẬP LỊCH (schedule) và ĐIỀU PHỐI (orchestrate) các công việc (tasks/workflows) tự động.
+Thay vì mỗi ngày bạn phải mở báo thức lên, bấm chạy code bằng tay, Airflow sẽ làm việc đó một cách tự động, bền bỉ và chuyên nghiệp.
+
+2. Cấu trúc hệ thống Airflow trong dự án này (chạy qua Docker)
+Để chạy được Airflow chuyên nghiệp, chúng ta không dùng 1 phần mềm lẻ tẻ mà sử dụng hệ sinh thái gồm 5 máy chủ (containers) chạy ngầm:
+- PostgreSQL (postgresql_guide-postgres-1): Đây là cơ sở dữ liệu (Database) NỘI BỘ của riêng Airflow. Nó lưu trữ mọi thông tin: tài khoản đăng nhập (airflow/airflow), danh sách các DAGs, lịch sử chạy bị lỗi hay thành công lúc mấy giờ. (Rất khác với Database Timescale nơi chứa dữ liệu chứng khoán của bạn).
+- Redis (postgresql_guide-redis-1): Làm nhiệm vụ "trạm bưu điện" (queue) trung chuyển mệnh lệnh để các bộ phận giao tiếp.
+- Scheduler (postgresql_guide-airflow-scheduler-1): BỘ NÃO của hệ thống. Liên tục quét mọi file trong thư mục dự án của bạn (chờ tìm file cấu trúc DAG) và kiểm tra đồng hồ xem "đã đến giờ chạy chưa". Nếu đến giờ, nó ném lệnh chạy vào Redis.
+- Worker (postgresql_guide-airflow-worker-1): ĐÔI TAY của hệ thống. Worker nhận lệnh từ Redis và trực tiếp thực thi thi hành (như việc chạy gọi script file Python `test.py --daily`).
+- Webserver (postgresql_guide-airflow-webserver-1): Giao diện Website (http://localhost:8080) để bạn theo dõi, bấm nút, xem log.
+
+3. Làm sao Airflow "nhìn" thấy code của bạn?
+- Trong file `docker-compose.yaml`, chúng ta đã tạo một đường ống siêu tốc (gọi là Volume Mount): `- .:/opt/airflow/dags`.
+- Đường ống này nối thẳng cấu trúc thư mục `E:\DoAnPython\POSTGRESQL_GUIDE` bên ngoài Windows của bạn... vào thẳng ổ cứng của Docker tại vị trí `/opt/airflow/dags`.
+- Nhờ vậy, bạn cứ sửa code trên Windows, Airflow tại Docker tự động bắt được và chạy bản code mới nhất ngay lập tức. Khỏi phải copy/paste rườm rà.
+
+4. Cấu tạo của một Workflow (DAG)
+DAG (Directed Acyclic Graph) là thuật ngữ Airflow dùng để gọi một "Lịch trình công việc".
+Ví dụ cụ thể với file `vnstock_sync_dag.py`:
+- start_date / schedule_interval: Định nghĩa tần suất chạy. '0 11 * * 1-5' nghĩa là:
+    + 0: Phút thứ 0
+    + 11: Giờ thứ 11 theo chuẩn quốc tế UTC (Do Airflow mặc định ở múi giờ 0). Bạn cộng thêm 7 là ra 18H giờ Việt Nam.
+    + *: Mọi ngày trong tháng
+    + *: Mọi tháng
+    + 1-5: Từ thứ 2 đến thứ 6 (Sàn VNIndex chỉ hoạt động ngày hành chính).
+- catchup=False: Rất quan trọng! Nếu thiết lập là True, Airflow sẽ cặm cụi chạy đền bù hết các ngày bị thụt lùi trong quá khứ nếu sever bị cúp điện dài ngày làm treo máy. False là chỉ chạy tương lai.
+- BashOperator: Đây là công nhân gõ lệnh Terminal hộ bạn. Nó được giao gõ chỉ thị `python /opt/airflow/dags/test.py --daily`.
+
+5. Tại sao phải có file `.airflowignore`?
+Do bạn "khoét lỗ" mount nguyên toàn bộ dự án Windows vào trong lõi Airflow. Bộ não Scheduler lúc nào cũng quét cực sâu vào từng ngóc ngách của dự án kể cả các thư mục chứa Logs hay môi trường 1GB như Venv. 
+Việc này làm máy tính chìm trong vong lặp, tự quét Logs của nội bộ mình khiến cho Airflow bị sập. Đặt file `.airflowignore` chứa các ký tự "logs/, venv/..." này là lệnh giúp Airflow tàng hình những file rác đi, Scheduler sẽ sống thảnh thơi.
+
+6. Chuyện về Cài đặt Thư viện Python (Mấu chốt nhất)
+- Airflow đang chạy kín hoàn toàn ở trong Linux - Không liên quan chút nào đến Venv hay môi trường Windows của bạn bên ngoài.
+- Nên dù trên Windows bạn có cào được, thì Airflow vẫn báo "Tôi không tìm ra Vnstock hay Pandas do Windows giấu kỹ rồi".
+- Giải pháp: Trong file YAML có lệnh: `_PIP_ADDITIONAL_REQUIREMENTS: 'vnstock pandas sqlalchemy psycopg2-binary'`. 
+Dòng lệnh này giúp mỗi khi con Webserver khởi động, nó tự biết chạy lên mạng tải 4 thư viện trên về đưa cho lõi xài. (Nếu sau này bạn cần import thư viện MỚI, nhớ phải cập nhật dòng YAML và khởi động lại Docker).
+
+7. Gỡ rối (Troubleshooting) - Các lệnh Terminal sống còn
+- Tạm dừng, tắt hoàn toàn hệ thống để chống lag máy: 
+  > docker compose down
+- Khởi động lại hệ thống sau khi mở máy tính: 
+  > docker compose up -d
+- Máy hay bị lag và Memory quá tải (Sập 502/Internal Server Error)?
+  Trong Docker YAML đã được tối ưu RAM: `AIRFLOW__WEBSERVER__WORKERS: 2` (Gốc là 4, cực kì nặng) & `AIRFLOW__CORE__LOAD_EXAMPLES: 'false'` (Che đi 75 DAGs ví dụ rác để giải phóng tài nguyên). Tối ưu này giữ cho chiếc máy tính không bị "bốc hỏa".
+
+========================
+|| BẢN TÓM TẮT CHUNG ||
+========================
+Quá trình diễn ra tự động 24/7 của bạn trông như sau:
+1. Chiều 18:00 (T2-T6) => Con não Scheduler phát chuông báo thức.
+2. Nó chuyển lệnh "Cào cho anh cái" sang cho trạm bưu điện Redis.
+3. Thằng lực sỹ Worker nhận lệnh từ Redis, chui vào terminal gõ thẳng dòng `test.py --daily`.
+4. File `test.py` được đánh thức, lờ đi Venv của Windows mà dùng thư viện gốc của nội bộ Linux kéo thông tin từ Web Vnstock.
+5. Code `timescale_utils.py` chạy. Nó bắt nối tới `host.docker.internal` (tức là ánh xạ thẳng dòng lệnh về cái Port 5433 nơi Timescale Postgres Windows xịn sò của bạn đang mở cổng).
+6. Tốc độ ánh sáng... đổ dữ liệu sầm sập vào Database Của Bạn.
+7. Xong việc, Webserver bật báo cáo Tích xanh 🟢. Chấm hết!
+
+Bây giờ bạn đã hoàn toàn làm chủ kiến trúc Data Engineer này rồi đó!
