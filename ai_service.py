@@ -1,128 +1,210 @@
-from fastapi import FastAPI, BackgroundTasks
-import uvicorn
+import os
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from sqlalchemy import text
-from sklearn.preprocessing import MinMaxScaler
 import tensorflow as tf
-from timescale_utils import DatabaseManager
-import os
-import datetime
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from sklearn.preprocessing import MinMaxScaler
+from sqlalchemy import text
 
-# Ẩn bớt các cảnh báo log không quan trọng của TensorFlow
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+from create_ml_table import create_predictions_table
+from timescale_utils import DatabaseManager
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 app = FastAPI(title="Stock AI Prediction Service API")
 
-def run_predictions():
-    print("\n[AI-Service] Bắt đầu kích hoạt quy trình dự đoán hàng loạt...")
+DEFAULT_FEATURES = ["close", "volume", "sma_10", "sma_20", "macd", "bb_upper", "bb_lower"]
+
+
+def _get_model_path() -> str:
+    candidates = [
+        os.getenv("AI_MODEL_PATH"),
+        "global_stock_model.h5",
+        "hpg_lstm_model.h5",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    raise FileNotFoundError("No .h5 model file found. Set AI_MODEL_PATH or mount a model file.")
+
+
+def _get_symbol_list(model_path: str) -> list[str]:
+    env_symbols = os.getenv("AI_SYMBOLS")
+    if env_symbols:
+        return [symbol.strip().upper() for symbol in env_symbols.split(",") if symbol.strip()]
+    if "global" in os.path.basename(model_path).lower():
+        return ["HPG", "VNM", "FPT", "TCB", "SSI"]
+    return ["HPG"]
+
+
+def ensure_prediction_table() -> None:
+    create_predictions_table()
+
+
+def fetch_prediction_input(engine: Any, symbol: str) -> pd.DataFrame:
+    query = text(
+        """
+        SELECT
+            q.close,
+            q.volume,
+            t.sma_10,
+            t.sma_20,
+            t.macd,
+            t.bb_upper,
+            t.bb_lower,
+            q.trading_date
+        FROM quote_history q
+        JOIN technical_indicators t
+          ON q.symbol = t.symbol
+         AND q.trading_date = t.trading_date
+        WHERE q.symbol = :sym
+        ORDER BY q.trading_date ASC
+        """
+    )
+    with engine.begin() as conn:
+        return pd.read_sql(query, conn, params={"sym": symbol}).dropna()
+
+
+def upsert_prediction(engine: Any, symbol: str, predicted_close: float, trend: str, target_date, model_path: str) -> None:
+    insert_sql = text(
+        """
+        INSERT INTO ml_predictions (
+            symbol, predict_date, target_date, predicted_close, trend, model_used
+        )
+        VALUES (:sym, CURRENT_DATE, :tdate, :pclose, :trend, :model)
+        ON CONFLICT (symbol, target_date)
+        DO UPDATE SET
+            predicted_close = EXCLUDED.predicted_close,
+            trend = EXCLUDED.trend,
+            model_used = EXCLUDED.model_used,
+            created_at = CURRENT_TIMESTAMP
+        """
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            insert_sql,
+            {
+                "sym": symbol,
+                "tdate": target_date,
+                "pclose": predicted_close,
+                "trend": trend,
+                "model": os.path.basename(model_path),
+            },
+        )
+
+
+def run_predictions(symbols: list[str] | None = None) -> dict[str, Any]:
+    print("\n[AI-Service] Starting batch prediction run...")
+    ensure_prediction_table()
+
     db = DatabaseManager()
     engine = db.engine
-    
     if engine is None:
-        print("❌ [AI-Service] Lỗi: Không thể kết nối Database PostgreSQL cục bộ!")
-        return
-        
-    model_path = "global_stock_model.h5"
-    if not os.path.exists(model_path):
-        # Nếu chưa Train xong Global Model, dùng tạm model HPG đã chạy thành công hồi nãy
-        print("[AI-Service] Không tìm thấy Siêu Mô Hình (Global), sử dụng tạm phân hệ độc lấp HPG...")
-        model_path = "hpg_lstm_model.h5"
-        if not os.path.exists(model_path):
-            print("❌ [AI-Service] Hoàn toàn không tìm thấy file h5 nào để chạy thuật toán.")
-            return
+        raise RuntimeError("Cannot connect to TimescaleDB/PostgreSQL.")
 
-    try:
-        model = tf.keras.models.load_model(model_path)
-        print(f"✅ [AI-Service] Hạch tâm nạp thành công: {model_path}")
-    except Exception as e:
-        print(f"❌ [AI-Service] Lỗi tải thư mục lõi: {e}")
-        return
+    model_path = _get_model_path()
+    model = tf.keras.models.load_model(model_path)
+    print(f"[AI-Service] Model loaded: {model_path}")
 
-    # Xác định danh sách tính toán (Gom thành cụm top List để làm đại diện)
-    symbol_list = ["HPG"] 
-    if "global" in model_path:
-        symbol_list = ["HPG", "VNM", "FPT", "TCB", "SSI"] # Tránh treo máy, ban đầu chạy top 5 mã này
-        
-    features = ['close', 'volume', 'sma_10', 'sma_20', 'macd', 'bb_upper', 'bb_lower']
-    
-    with engine.begin() as conn:
-        for symbol in symbol_list:
-            query = text("""
-                SELECT 
-                    q.close, q.volume, t.sma_10, t.sma_20, t.macd, t.bb_upper, t.bb_lower, q.trading_date
-                FROM quote_history q
-                JOIN technical_indicators t 
-                  ON q.symbol = t.symbol AND q.trading_date = t.trading_date
-                WHERE q.symbol = :sym
-                ORDER BY q.trading_date ASC
-            """)
-            df = pd.read_sql(query, conn, params={"sym": symbol}).dropna()
-            
-            if len(df) < 60:
-                print(f"⚠️ [AI-Service] Bỏ lỡ {symbol} vì niêm yết thiếu phiên (Chưa đủ 60).")
-                continue
-                
-            dates = df['trading_date'].values
-            data = df[features].values
-            
-            # Quá trình đồng bộ mảng tỉ lệ
-            scaler = MinMaxScaler(feature_range=(0, 1))
-            scaled_data = scaler.fit_transform(data)
-            
-            last_60_days = scaled_data[-60:]
-            X_input = np.array([last_60_days])
-            
-            # Predict
-            pred_scaled = model.predict(X_input, verbose=0)
-            
-            dummy_matrix = np.zeros((1, len(features)))
-            dummy_matrix[0, 0] = pred_scaled[0, 0]
-            pred_price = scaler.inverse_transform(dummy_matrix)[0, 0]
-            
-            last_actual_price = data[-1, 0]
-            diff = pred_price - last_actual_price
-            trend = "TĂNG" if diff > 0 else "GIẢM"
-            
-            # Lịch phiên tương lai (Tìm ngày giao dịch phi thứ 7/CN tiếp theo)
-            last_date = pd.to_datetime(dates[-1])
-            target_date = last_date + pd.Timedelta(days=1)
-            if target_date.weekday() >= 5: # 5: Sat, 6: Sun
-                target_date += pd.Timedelta(days=(7 - target_date.weekday()))
-                
-            # Đẩy kết quả lưu vào Database (Bảng ml_predictions ta vừa tạo ở Bước 1)
-            insert_sql = text("""
-                INSERT INTO ml_predictions (symbol, predict_date, target_date, predicted_close, trend, model_used)
-                VALUES (:sym, CURRENT_DATE, :tdate, :pclose, :trend, :model)
-                ON CONFLICT (symbol, target_date) 
-                DO UPDATE SET predicted_close = EXCLUDED.predicted_close, trend = EXCLUDED.trend, created_at = CURRENT_TIMESTAMP
-            """)
-            
-            conn.execute(insert_sql, {
-                "sym": symbol,
-                "tdate": target_date.date(),
-                "pclose": float(pred_price),
+    symbol_list = symbols or _get_symbol_list(model_path)
+    results = []
+
+    for symbol in symbol_list:
+        df = fetch_prediction_input(engine, symbol)
+        if len(df) < 60:
+            print(f"[AI-Service] Skip {symbol}: not enough rows ({len(df)}).")
+            results.append({"symbol": symbol, "status": "skipped", "reason": "not_enough_rows"})
+            continue
+
+        dates = df["trading_date"].values
+        data = df[DEFAULT_FEATURES].values
+
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled_data = scaler.fit_transform(data)
+        x_input = np.array([scaled_data[-60:]])
+
+        pred_scaled = model.predict(x_input, verbose=0)
+        dummy_matrix = np.zeros((1, len(DEFAULT_FEATURES)))
+        dummy_matrix[0, 0] = pred_scaled[0, 0]
+        predicted_close = float(scaler.inverse_transform(dummy_matrix)[0, 0])
+
+        last_actual_price = float(data[-1, 0])
+        trend = "TANG" if predicted_close > last_actual_price else "GIAM"
+
+        last_date = pd.to_datetime(dates[-1])
+        target_date = last_date + pd.Timedelta(days=1)
+        if target_date.weekday() >= 5:
+            target_date += pd.Timedelta(days=(7 - target_date.weekday()))
+
+        upsert_prediction(engine, symbol, predicted_close, trend, target_date.date(), model_path)
+        print(f"[AI-Service] Predicted {symbol}: {predicted_close:,.0f} | {trend} | {target_date.date()}")
+        results.append(
+            {
+                "symbol": symbol,
+                "status": "predicted",
+                "predicted_close": predicted_close,
                 "trend": trend,
-                "model": model_path
-            })
-            print(f"  👉 Đoán {symbol}: {pred_price:,.0f} VND (Hướng: {trend}) | Chờ kiểm định ngày: {target_date.date()}")
+                "target_date": str(target_date.date()),
+            }
+        )
 
-    print("🏁 [AI-Service] Mọi tính toán AI đã được ghi tệp thành công!")
+    return {
+        "status": "completed",
+        "model_used": os.path.basename(model_path),
+        "symbols": results,
+    }
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    ensure_prediction_table()
+
 
 @app.post("/daily_predict_all")
 def trigger_daily_prediction(background_tasks: BackgroundTasks):
-    """
-    Airflow ping (chọc) Endpoint này sau khi cập nhật VNSTOCK xong.
-    API trả lời ngay OK, và thiết lập luồng run_predictions chạy ngầm. 
-    Không bao giờ báo lỗi Timeout.
-    """
     background_tasks.add_task(run_predictions)
-    return {"status": "success", "message": "Tiến trình AI đã được gọi dậy và đang chạy ngầm trong máy tính của bạn."}
+    return {"status": "accepted", "message": "Prediction task started in background."}
+
+
+@app.post("/predict_now")
+def predict_now(symbols: list[str] | None = None):
+    try:
+        return run_predictions(symbols=symbols)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/predictions/latest")
+def latest_predictions(limit: int = 20):
+    ensure_prediction_table()
+    db = DatabaseManager()
+    engine = db.engine
+    if engine is None:
+        raise HTTPException(status_code=500, detail="Cannot connect to database.")
+
+    query = text(
+        """
+        SELECT symbol, predict_date, target_date, predicted_close, trend, model_used, created_at
+        FROM ml_predictions
+        ORDER BY created_at DESC
+        LIMIT :limit
+        """
+    )
+    with engine.begin() as conn:
+        rows = pd.read_sql(query, conn, params={"limit": limit})
+    return rows.to_dict(orient="records")
+
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "LSTM AI Microservice Đang Chạy Mượt Mà"}
+    model_path = os.getenv("AI_MODEL_PATH", "global_stock_model.h5")
+    return {"status": "ok", "service": "ai-service", "model_path": model_path}
+
 
 if __name__ == "__main__":
-    # Để API có thể nghe mọi liên kết trong docker gửi ra, cần chạy host 0.0.0.0
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -67,9 +67,14 @@ x-airflow-common:
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
     # yamllint enable rule:line-length
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    MONGO_ENABLED: ${MONGO_ENABLED:-true}
+    MONGO_HOST: ${MONGO_HOST:-mongodb}
+    MONGO_PORT: ${MONGO_PORT:-27017}
+    MONGO_DATABASE: ${MONGO_DATABASE:-vnstock_raw}
+    AI_SERVICE_URL: ${AI_SERVICE_URL:-http://ai-service:8000}
     # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
     # for other purpose (development, test and especially production usage) build/extend Airflow image.
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-vnstock pandas sqlalchemy psycopg2-binary vnstock_chart --extra-index-url https://vnstocks.com/api/simple scipy scikit-learn}
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-vnstock pandas sqlalchemy psycopg2-binary pymongo vnstock_chart --extra-index-url https://vnstocks.com/api/simple scipy scikit-learn}
     # The following line can be used to set a custom config file, stored in the local config folder
     # If you want to use it, outcomment it and replace airflow.cfg with the name of your config file
     # AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
@@ -85,6 +90,8 @@ x-airflow-common:
     redis:
       condition: service_healthy
     postgres:
+      condition: service_healthy
+    mongodb:
       condition: service_healthy
 
 services:
@@ -114,6 +121,46 @@ services:
       interval: 10s
       timeout: 30s
       retries: 50
+      start_period: 30s
+    restart: always
+
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-db-volume:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: always
+
+  ai-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    environment:
+      MONGO_ENABLED: ${MONGO_ENABLED:-true}
+      MONGO_HOST: ${MONGO_HOST:-mongodb}
+      MONGO_PORT: ${MONGO_PORT:-27017}
+      MONGO_DATABASE: ${MONGO_DATABASE:-vnstock_raw}
+      AI_MODEL_PATH: ${AI_MODEL_PATH:-/app/global_stock_model.h5}
+      AI_SYMBOLS: ${AI_SYMBOLS:-}
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
       start_period: 30s
     restart: always
 
@@ -288,3 +335,4 @@ services:
 
 volumes:
   postgres-db-volume:
+  mongo-db-volume:

@@ -1,6 +1,7 @@
 from sqlalchemy import text
 from timescale_utils import DatabaseManager
 
+
 def create_predictions_table():
     db = DatabaseManager()
     engine = db.engine
