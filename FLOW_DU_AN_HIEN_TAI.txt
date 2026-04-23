@@ -2,19 +2,20 @@ TAI LIEU FLOW HOAT DONG DU AN - TRANG THAI HIEN TAI
 ==================================================
 
 CAP NHAT MOI:
-- DAG hien tai da duoc toi uu thanh: sync du lieu -> compute indicators -> trigger AI.
-- AI service da co the chay thanh service rieng trong docker-compose, khong can mo tay `python ai_service.py`.
+- He thong da duoc toi uu de giam tai. AI Service da duoc go bo khoi docker-compose va luong chay tu dong vi qua nang.
+- DAG hien tai trong Airflow chi con 2 buoc: sync du lieu -> compute indicators.
+- Phan tich va du bao AI se duoc thuc hien thu cong bang cach chay script rieng (tren may host) khi can thiet.
 
 1. MUC TIEU CHUNG
 -----------------
 Du an nay la mot he thong thu thap du lieu chung khoan Viet Nam, luu tru vao
-TimescaleDB/PostgreSQL, tinh chi bao ky thuat, xuat du lieu cho mo hinh LSTM,
-va kich hoat mot AI service de du bao gia dong cua.
+TimescaleDB/PostgreSQL, tinh chi bao ky thuat va xuat du lieu cho mo hinh LSTM.
+(Phan AI service hien da duoc tach ra chay thu cong de tiet kiem tai nguyen)
 
 Trang thai hien tai cua du an co 3 lop chinh:
 - Lop ha tang va dieu phoi: Docker Compose + Airflow + Redis + PostgreSQL + MongoDB
 - Lop ETL va luu tru: script sync du lieu vao TimescaleDB va raw payload vao MongoDB
-- Lop phan tich/AI: tinh technical indicators, export data cho LSTM, va du bao bang FastAPI
+- Lop phan tich (chay tu dong hoac thu cong): tinh technical indicators, export data cho LSTM.
 
 
 2. CAC THANH PHAN CHINH TRONG REPO
@@ -79,22 +80,18 @@ Luu y:
 --------------------------------
 Flow hien tai nen duoc hieu theo 2 nhanh:
 
-A. Nhanh van hanh chinh
+A. Nhanh van hanh chinh (Tu dong hoa hoan toan)
 - Airflow chay DAG hang ngay
-- DAG goi script sync du lieu
-- Sau do DAG goi AI service
+- DAG goi script sync du lieu (test.py)
+- DAG goi script tinh toan chi bao (compute_indicators.py)
 
-B. Nhanh xu ly phu tro cho AI/ML
-- Tinh technical indicators
-- Xuat du lieu huan luyen
-- Train model ben ngoai hoac dung model co san
-- AI service doc model va sinh du bao
+B. Nhanh xu ly phu tro AI/ML (Thu cong)
+- Xuat du lieu huan luyen (export_data_lstm.py)
+- Train model ben ngoai hoac dung model co san (.h5)
+- Chay thu cong AI service hoac script predict de sinh du bao
 
 Quan trong:
-- AI service hien tai can bang technical_indicators.
-- Nhưng DAG hien tai chua tu dong goi compute_indicators.py.
-- Vi vay muon AI du bao chay dung, bang technical_indicators phai da duoc tao
-  va cap nhat truoc do bang tay hoac bang mot job rieng.
+- Bang technical_indicators hien da duoc tich hop vao DAG chay tu dong moi ngay sau khi sync du lieu de dam bao data phuc vu cho chay AI tay luon la moi nhat.
 
 
 5. FLOW CHI TIET - KHOI DONG AIRFLOW
@@ -122,13 +119,12 @@ Task 1: run_daily_sync
 - Lenh: `python /opt/airflow/dags/test.py --daily`
 - Muc tieu: dong bo du lieu thi truong moi nhat
 
-Task 2: trigger_ai_prediction
-- Lenh: `curl -X POST http://host.docker.internal:8000/daily_predict_all`
-- Muc tieu: goi FastAPI service de chay du bao
+Task 2: compute_daily_indicators
+- Lenh: `python /opt/airflow/dags/compute_indicators.py --daily`
+- Muc tieu: tinh toan chi bao ky thuat moi nhat tu du lieu vua dong bo
 
 Thu tu:
-- run_daily_sync >> trigger_ai_prediction
-- Nghia la sync xong moi duoc goi AI
+- run_daily_sync >> compute_daily_indicators
 
 
 7. FLOW CHI TIET - TEST.PY (MASTER SYNC)
@@ -325,9 +321,8 @@ compute_indicators.py la nhanh xu ly trung gian giua ETL va AI.
   `python compute_indicators.py --symbol TCB FPT VNM`
 
 10.5. Diem quan trong
-- Bang `technical_indicators` la dependency truc tiep cua AI service
-- Hien tai DAG chua goi script nay
-- Neu bang nay khong moi, du bao AI co the sai hoac khong chay
+- Bang `technical_indicators` hien da duoc tich hop chay tu dong sau khi dong bo quote_history.
+- Nho the ma khi ban chay cac script AI (thu cong) thi luon co du lieu chi bao moi nhat de du doan.
 
 
 11. FLOW CHI TIET - EXPORT DATA CHO LSTM
@@ -415,25 +410,17 @@ Buoc 4:
 Buoc 5:
 - test.py refresh continuous aggregates
 
+Buoc 5:
+- test.py refresh continuous aggregates
+
 Buoc 6:
-- Task `trigger_ai_prediction` goi POST `/daily_predict_all`
+- Task `compute_daily_indicators` chay de tinh toan indicator moi.
+- Hoan thanh quy trinh dong bo tu dong hang ngay.
 
-Buoc 7:
-- FastAPI nhan request va tao background task
-
-Buoc 8:
-- AI service doc `quote_history` + `technical_indicators`
-- Load model `.h5`
-- Sinh du bao
-- Ghi vao `ml_predictions`
-
-Luu y rat quan trong:
-- Buoc compute_indicators hien tai khong nam giua Buoc 5 va Buoc 6 trong DAG
-- Neu technical_indicators chua duoc cap nhat, AI service van duoc goi nhung co the:
-  khong du data
-  join ra rong
-  bo qua symbol
-  cho ket qua khong dung voi du lieu moi nhat
+(AI duoc chay thu cong khi can):
+- Nguoi dung mo rieng moi truong ao hoac script Python doc lap
+- Chay cac script AI de doc `quote_history` + `technical_indicators` moi nhat
+- Sinh du bao roi kiem tra hoac day vao db neu muon
 
 
 14. NHUNG DIEM PHU THUOC QUAN TRONG
@@ -451,38 +438,26 @@ De flow end-to-end chay on dinh, can dam bao:
 
 15. NHUNG LUONG CHUA TU DONG HOA HOAN TOAN
 ------------------------------------------
-Hien tai van con cac khoang trong van hanh:
+Hien tai van con cac thao tac mang tinh ky thuat nguoi dung tu chay:
 
-- DAG chua goi `compute_indicators.py`
-- DAG chua goi `export_data_lstm.py` hoac `export_all_lstm.py`
-- Train model LSTM chua nam trong pipeline
-- Tao bang `ml_predictions` khong nam trong timescale_utils.py
-
-Noi cach khac:
-- ETL va trigger AI da co
-- Nhung phan indicator va huan luyen model chua duoc noi thanh mot chuoi tu dong day du
+- Chay pipeline AI/LSTM: gom export_data, train model, va predict.
+- Cac tac vu nay phu thuoc phan ung thi truong va quy trinh kiem thu AI nen duoc giu doc lap (khong chay trong Airflow de toi uu he thong).
 
 
 16. KET LUAN NGAN GON
 --------------------
 Flow hien tai cua du an la:
 
+A. Tu dong hoa hang ngay (Airflow):
 Airflow/Docker
 -> test.py dong bo du lieu tu cac nguon VNStock
 -> luu du lieu chuan hoa vao TimescaleDB
 -> luu raw payload va crawl log vao MongoDB
 -> refresh aggregate
--> trigger FastAPI AI service
--> AI service doc SQL + model .h5
--> ghi du bao vao ml_predictions
+-> compute_indicators.py cap nhat technical_indicators de san sang cho buoc ML.
 
-Nhanh phu tro:
-
-quote_history
--> compute_indicators.py
--> technical_indicators
+B. Thao tac thu cong (khi can nghien cuu, chay AI):
 -> export_data_lstm.py / export_all_lstm.py
--> train/predict LSTM
+-> train/predict LSTM (chay cac file AI tren may host cua ban)
 
-Trang thai hien tai la mot he thong da co xuong song ETL + orchestration + AI,
-nhung chua noi full pipeline indicator/train/predict thanh mot flow tu dong khép kin.
+Trang thai hien tai: he thong thu thap du lieu va tinh toan chi bao hoat dong on dinh, nhe nhang va tu dong hoan toan. Cac tac vu nang nhu chay AI/ML da duoc tach ra chay doc lap de tranh qua tai he thong.

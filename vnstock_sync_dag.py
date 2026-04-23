@@ -31,9 +31,4 @@ with DAG(
         bash_command="python /opt/airflow/dags/compute_indicators.py --daily",
     )
 
-    trigger_ai_prediction = BashOperator(
-        task_id="trigger_ai_prediction",
-        bash_command='curl -X POST "${AI_SERVICE_URL:-http://ai-service:8000}/daily_predict_all"',
-    )
-
-    run_sync >> compute_daily_indicators >> trigger_ai_prediction
+    run_sync >> compute_daily_indicators

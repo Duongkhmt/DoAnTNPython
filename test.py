@@ -2,6 +2,7 @@ import sys
 import math
 import time
 import uuid
+import argparse
 from datetime import datetime, timedelta
 
 # Add Windows venv site-packages when the project is mounted into Docker.
@@ -25,14 +26,35 @@ db.create_all_tables()
 mongo = MongoManager()
 RUN_ID = uuid.uuid4().hex[:12]
 
-if "--daily" in sys.argv:
+TODAY = datetime.now().strftime("%Y-%m-%d")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Master sync VNStock data")
+    parser.add_argument("--daily", action="store_true", help="Dong bo du lieu gan day")
+    parser.add_argument("--backfill", action="store_true", help="Refresh aggregate sau khi crawl")
+    parser.add_argument("--symbols", nargs="*", help="Chi crawl cac ma chi dinh")
+    parser.add_argument("--limit", type=int, help="Gioi han so ma can crawl")
+    parser.add_argument("--batch-size", type=int, default=25, help="So ma moi batch")
+    parser.add_argument(
+        "--stages",
+        nargs="+",
+        choices=["quotes", "company", "finance", "trading"],
+        help="Chi chay cac stage duoc chi dinh",
+    )
+    parser.add_argument("--stage-sleep", type=float, default=0.1, help="Nghi giua tung request")
+    parser.add_argument("--batch-sleep", type=float, default=5.0, help="Nghi giua cac batch")
+    return parser.parse_args()
+
+
+ARGS = parse_args()
+
+if ARGS.daily:
     START_DATE = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
     print(f"[*] CHE DO DONG BO HANG NGAY: {START_DATE} den nay")
 else:
     START_DATE = "2024-01-01"
     print(f"[*] CHE DO DONG BO LICH SU: {START_DATE} den nay")
-
-TODAY = datetime.now().strftime("%Y-%m-%d")
 
 
 def save_raw(dataset, symbol, source, payload, metadata=None):
@@ -129,7 +151,7 @@ def sync_quotes(symbols):
             else:
                 log_stage("quotes", symbol, "empty")
 
-            time.sleep(0.1)
+            time.sleep(ARGS.stage_sleep)
         except Exception as exc:
             log_stage("quotes", symbol, "error", message=str(exc))
 
@@ -169,7 +191,7 @@ def sync_company(symbols):
             print(f"    -> Bo qua Company {symbol}: {exc}")
             log_stage("company", symbol, "error", message=str(exc))
 
-        time.sleep(0.1)
+        time.sleep(ARGS.stage_sleep)
 
     print(f"\n  Company xong! Thanh cong: {success}/{len(symbols)}.")
 
@@ -239,7 +261,7 @@ def sync_finance(symbols):
             print(f"    -> Bo qua Finance {symbol}: {exc}")
             log_stage("finance", symbol, "error", message=str(exc))
 
-        time.sleep(0.1)
+        time.sleep(ARGS.stage_sleep)
 
     print(f"\n  Finance xong! Thanh cong: {success}/{len(symbols)}.")
 
@@ -375,7 +397,7 @@ def sync_trading(symbols):
                 pass
 
             success += 1
-            time.sleep(0.1)
+            time.sleep(ARGS.stage_sleep)
         except Exception as exc:
             log_stage("trading", symbol, "error", message=str(exc))
 
@@ -403,7 +425,7 @@ def get_done_symbols():
 
 def main():
     demo_mode = False
-    log_stage("run", None, "started", extra={"daily_mode": "--daily" in sys.argv})
+    log_stage("run", None, "started", extra={"daily_mode": ARGS.daily})
 
     symbols = sync_listing()
 
@@ -411,21 +433,33 @@ def main():
         symbols = ["TCB", "FPT", "VNM", "SHB", "ACB"]
         print(f"\n[DEMO] Chay thu {len(symbols)} ma: {symbols}")
 
+    if ARGS.symbols:
+        requested_symbols = {symbol.upper() for symbol in ARGS.symbols}
+        symbols = [s for s in symbols if s.upper() in requested_symbols]
+        print(f"\nLoc theo --symbols, con {len(symbols)} ma: {symbols[:10]}")
+
     done_symbols = get_done_symbols()
-    symbols = [s for s in symbols if s not in done_symbols]
+    if not ARGS.symbols:
+        symbols = [s for s in symbols if s not in done_symbols]
+
+    if ARGS.limit:
+        symbols = symbols[: ARGS.limit]
+
+    selected_stages = ARGS.stages or ["quotes", "company", "finance", "trading"]
 
     print(f"\nTong ma: {len(symbols) + len(done_symbols)}")
     print(f"  Da co: {len(done_symbols)}")
     print(f"  Con crawl: {len(symbols)}")
+    print(f"  Stage se chay: {selected_stages}")
 
     if not symbols:
         print("\nKhong con gi de crawl!")
         log_stage("run", None, "completed", extra={"remaining_symbols": 0})
-        if "--backfill" in sys.argv:
+        if ARGS.backfill:
             db.refresh_historical_aggregates(start=START_DATE)
         return
 
-    batch_size = 50
+    batch_size = max(1, ARGS.batch_size)
     total_batches = math.ceil(len(symbols) / batch_size)
     print(f"\nBat dau {total_batches} batch (moi batch {batch_size} ma)...")
 
@@ -436,28 +470,33 @@ def main():
 
         for symbol in batch:
             try:
-                sync_quotes([symbol])
-                sync_company([symbol])
-                sync_finance([symbol])
-                sync_trading([symbol])
+                if "quotes" in selected_stages:
+                    sync_quotes([symbol])
+                if "company" in selected_stages:
+                    sync_company([symbol])
+                if "finance" in selected_stages:
+                    sync_finance([symbol])
+                if "trading" in selected_stages:
+                    sync_trading([symbol])
                 print(f"  DONE {symbol}")
             except Exception as exc:
                 print(f"  Loi {symbol}: {exc}")
                 log_stage("symbol", symbol, "error", message=str(exc))
-            time.sleep(0.1)
+            time.sleep(ARGS.stage_sleep)
 
         done_now = len(done_symbols) + (i + 1) * batch_size
         total = len(symbols) + len(done_symbols)
         percent = min(100, round(done_now * 100 / total, 2))
         print(f"\n  Tien do: ~{percent}%")
-        print("  Nghi 5s...")
-        time.sleep(5)
+        print(f"  Nghi {ARGS.batch_sleep}s...")
+        time.sleep(ARGS.batch_sleep)
 
     print("\nDONE ALL!")
     log_stage("run", None, "completed", extra={"processed_symbols": len(symbols)})
 
-    print("\nBackfill Continuous Aggregates...")
-    db.refresh_historical_aggregates(start=START_DATE)
+    if ARGS.backfill:
+        print("\nBackfill Continuous Aggregates...")
+        db.refresh_historical_aggregates(start=START_DATE)
 
 
 if __name__ == "__main__":
