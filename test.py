@@ -266,6 +266,143 @@ def sync_finance(symbols):
     print(f"\n  Finance xong! Thanh cong: {success}/{len(symbols)}.")
 
 
+# def sync_trading(symbols):
+#     print(f"\n[5] DANG DONG BO TRADING CHO {len(symbols)} MA...")
+
+#     success = 0
+#     for idx, symbol in enumerate(symbols):
+#         print(f"  [{idx + 1}/{len(symbols)}] Trading: {symbol}")
+#         try:
+#             tr = Trading(symbol=symbol, source="VCI")
+#             df_foreign = tr.foreign_trade(start=START_DATE, end=TODAY)
+#             df_prop = tr.prop_trade(start=START_DATE, end=TODAY)
+#             save_raw(
+#                 "trading_foreign",
+#                 symbol,
+#                 "VCI",
+#                 df_foreign.to_dict(orient="records"),
+#                 {"rows": len(df_foreign), "start_date": START_DATE, "end_date": TODAY},
+#             )
+#             save_raw(
+#                 "trading_prop",
+#                 symbol,
+#                 "VCI",
+#                 df_prop.to_dict(orient="records"),
+#                 {"rows": len(df_prop), "start_date": START_DATE, "end_date": TODAY},
+#             )
+
+#             if len(df_foreign) > 0 or len(df_prop) > 0:
+#                 all_dates = set()
+#                 if len(df_foreign) > 0:
+#                     all_dates.update(df_foreign["trading_date"].tolist())
+#                 if len(df_prop) > 0:
+#                     all_dates.update(df_prop["trading_date"].tolist())
+
+#                 fr_map = df_foreign.set_index("trading_date").to_dict("index") if len(df_foreign) > 0 else {}
+#                 prop_map = df_prop.set_index("trading_date").to_dict("index") if len(df_prop) > 0 else {}
+
+#                 records = []
+#                 for trading_date in all_dates:
+#                     f_row = fr_map.get(trading_date, {})
+#                     p_row = prop_map.get(trading_date, {})
+#                     records.append(
+#                         {
+#                             "symbol": symbol,
+#                             "trading_date": trading_date,
+#                             "fr_buy_volume": float(f_row.get("fr_buy_volume_matched", 0) or 0),
+#                             "fr_sell_volume": float(f_row.get("fr_sell_volume_matched", 0) or 0),
+#                             "prop_buy_volume": float(p_row.get("total_buy_trade_volume", 0) or 0),
+#                             "prop_sell_volume": float(p_row.get("total_sell_trade_volume", 0) or 0),
+#                         }
+#                     )
+
+#                 df_clean = pd.DataFrame(records)
+#                 df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
+#                 db.upsert_dataframe(df_clean, "trading", conflict_cols=["symbol", "trading_date"])
+#                 log_stage("trading", symbol, "success", extra={"rows": len(df_clean)})
+#             else:
+#                 log_stage("trading", symbol, "empty")
+
+#             try:
+#                 tr_cafe = Trading(symbol=symbol, source="CAFEF")
+#                 df_order = tr_cafe.order_stats(start=START_DATE, end=TODAY)
+#                 save_raw(
+#                     "trading_order_stats",
+#                     symbol,
+#                     "CAFEF",
+#                     df_order.to_dict(orient="records"),
+#                     {"rows": len(df_order), "start_date": START_DATE, "end_date": TODAY},
+#                 )
+#                 if len(df_order) > 0:
+#                     df_clean = df_order.copy()
+#                     if "symbol" not in df_clean.columns:
+#                         df_clean["symbol"] = symbol
+#                     if "trading_date" not in df_clean.columns:
+#                         if isinstance(df_clean.index, pd.DatetimeIndex) or df_clean.index.name == "date":
+#                             df_clean["trading_date"] = df_clean.index.date
+#                     if "trading_date" in df_clean.columns:
+#                         df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
+#                         db.upsert_dataframe(df_clean, "trading_order_stats", conflict_cols=["symbol", "trading_date"])
+#             except Exception:
+#                 pass
+
+#             try:
+#                 df_sum = tr.summary(start=START_DATE, end=TODAY)
+#                 save_raw(
+#                     "trading_summary",
+#                     symbol,
+#                     "VCI",
+#                     df_sum.to_dict(orient="records"),
+#                     {"rows": len(df_sum), "start_date": START_DATE, "end_date": TODAY},
+#                 )
+#                 if len(df_sum) > 0:
+#                     df_clean = df_sum.copy()
+#                     df_clean["symbol"] = symbol
+
+#                     if "trading_date" not in df_clean.columns:
+#                         df_clean["trading_date"] = TODAY
+#                     if "total_volume" in df_clean.columns:
+#                         df_clean["total_trading_vol"] = df_clean["total_volume"]
+#                     if "total_value" in df_clean.columns:
+#                         df_clean["total_trading_val"] = df_clean["total_value"]
+
+#                     expected_cols = [
+#                         "symbol",
+#                         "trading_date",
+#                         "total_trading_vol",
+#                         "total_trading_val",
+#                         "open_price",
+#                         "highest_price",
+#                         "lowest_price",
+#                         "close_price",
+#                     ]
+#                     for col in expected_cols:
+#                         if col not in df_clean.columns:
+#                             df_clean[col] = None
+#                     df_clean = df_clean[expected_cols]
+
+#                     df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
+#                     for col in [
+#                         "total_trading_vol",
+#                         "total_trading_val",
+#                         "open_price",
+#                         "highest_price",
+#                         "lowest_price",
+#                         "close_price",
+#                     ]:
+#                         df_clean[col] = pd.to_numeric(df_clean[col], errors="coerce")
+
+#                     db.upsert_dataframe(df_clean, "trading_summary", conflict_cols=["symbol", "trading_date"])
+#             except Exception:
+#                 pass
+
+#             success += 1
+#             time.sleep(ARGS.stage_sleep)
+#         except Exception as exc:
+#             log_stage("trading", symbol, "error", message=str(exc))
+
+#     print(f"\n  Trading xong! Thanh cong: {success}/{len(symbols)}.")
+
 def sync_trading(symbols):
     print(f"\n[5] DANG DONG BO TRADING CHO {len(symbols)} MA...")
 
@@ -274,22 +411,16 @@ def sync_trading(symbols):
         print(f"  [{idx + 1}/{len(symbols)}] Trading: {symbol}")
         try:
             tr = Trading(symbol=symbol, source="VCI")
+
+            # --- Foreign trade ---
             df_foreign = tr.foreign_trade(start=START_DATE, end=TODAY)
             df_prop = tr.prop_trade(start=START_DATE, end=TODAY)
-            save_raw(
-                "trading_foreign",
-                symbol,
-                "VCI",
-                df_foreign.to_dict(orient="records"),
-                {"rows": len(df_foreign), "start_date": START_DATE, "end_date": TODAY},
-            )
-            save_raw(
-                "trading_prop",
-                symbol,
-                "VCI",
-                df_prop.to_dict(orient="records"),
-                {"rows": len(df_prop), "start_date": START_DATE, "end_date": TODAY},
-            )
+            save_raw("trading_foreign", symbol, "VCI",
+                     df_foreign.to_dict(orient="records"),
+                     {"rows": len(df_foreign)})
+            save_raw("trading_prop", symbol, "VCI",
+                     df_prop.to_dict(orient="records"),
+                     {"rows": len(df_prop)})
 
             if len(df_foreign) > 0 or len(df_prop) > 0:
                 all_dates = set()
@@ -298,23 +429,26 @@ def sync_trading(symbols):
                 if len(df_prop) > 0:
                     all_dates.update(df_prop["trading_date"].tolist())
 
-                fr_map = df_foreign.set_index("trading_date").to_dict("index") if len(df_foreign) > 0 else {}
-                prop_map = df_prop.set_index("trading_date").to_dict("index") if len(df_prop) > 0 else {}
+                fr_map  = df_foreign.set_index("trading_date").to_dict("index") if len(df_foreign) > 0 else {}
+                prop_map = df_prop.set_index("trading_date").to_dict("index")   if len(df_prop)    > 0 else {}
 
                 records = []
                 for trading_date in all_dates:
                     f_row = fr_map.get(trading_date, {})
                     p_row = prop_map.get(trading_date, {})
-                    records.append(
-                        {
-                            "symbol": symbol,
-                            "trading_date": trading_date,
-                            "fr_buy_volume": float(f_row.get("fr_buy_volume_matched", 0) or 0),
-                            "fr_sell_volume": float(f_row.get("fr_sell_volume_matched", 0) or 0),
-                            "prop_buy_volume": float(p_row.get("total_buy_trade_volume", 0) or 0),
-                            "prop_sell_volume": float(p_row.get("total_sell_trade_volume", 0) or 0),
-                        }
-                    )
+                    records.append({
+                        "symbol":            symbol,
+                        "trading_date":      trading_date,
+                        "fr_buy_volume":     float(f_row.get("fr_buy_volume_matched",   0) or 0),
+                        "fr_sell_volume":    float(f_row.get("fr_sell_volume_matched",  0) or 0),
+                        # Chia 1e9 ngay → lưu vào DB đã là tỷ VNĐ rồi
+                        "fr_buy_value":      float(f_row.get("fr_buy_value_matched",    0) or 0) / 1e9,
+                        "fr_sell_value":     float(f_row.get("fr_sell_value_matched",   0) or 0) / 1e9,
+                        "prop_buy_volume":   float(p_row.get("total_buy_trade_volume",  0) or 0),
+                        "prop_sell_volume":  float(p_row.get("total_sell_trade_volume", 0) or 0),
+                        "prop_buy_value":    float(p_row.get("total_buy_trade_value",   0) or 0) / 1e9,
+                        "prop_sell_value":   float(p_row.get("total_sell_trade_value",  0) or 0) / 1e9,
+                    })
 
                 df_clean = pd.DataFrame(records)
                 df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
@@ -323,86 +457,94 @@ def sync_trading(symbols):
             else:
                 log_stage("trading", symbol, "empty")
 
+            # --- Price history (thay thế trading_summary + trading_order_stats) ---
             try:
-                tr_cafe = Trading(symbol=symbol, source="CAFEF")
-                df_order = tr_cafe.order_stats(start=START_DATE, end=TODAY)
-                save_raw(
-                    "trading_order_stats",
-                    symbol,
-                    "CAFEF",
-                    df_order.to_dict(orient="records"),
-                    {"rows": len(df_order), "start_date": START_DATE, "end_date": TODAY},
-                )
-                if len(df_order) > 0:
-                    df_clean = df_order.copy()
-                    if "symbol" not in df_clean.columns:
-                        df_clean["symbol"] = symbol
-                    if "trading_date" not in df_clean.columns:
-                        if isinstance(df_clean.index, pd.DatetimeIndex) or df_clean.index.name == "date":
-                            df_clean["trading_date"] = df_clean.index.date
-                    if "trading_date" in df_clean.columns:
-                        df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
-                        db.upsert_dataframe(df_clean, "trading_order_stats", conflict_cols=["symbol", "trading_date"])
+                df_ph = tr.price_history(start=START_DATE, end=TODAY)
+                save_raw("trading_price_history", symbol, "VCI",
+                         df_ph.to_dict(orient="records"),
+                         {"rows": len(df_ph)})
+
+                if len(df_ph) > 0:
+                    df_clean = df_ph.copy()
+                    df_clean["symbol"] = symbol
+                    df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
+
+                    # Upsert trading_summary
+                    summary_cols = {
+                        "total_trading_vol": "total_volume",
+                        "total_trading_val": "total_value",
+                        "open_price":        "open",
+                        "highest_price":     "high",
+                        "lowest_price":      "low",
+                        "close_price":       "close",
+                    }
+                    df_sum = pd.DataFrame()
+                    df_sum["symbol"]       = df_clean["symbol"]
+                    df_sum["trading_date"] = df_clean["trading_date"]
+                    for target, source_col in summary_cols.items():
+                        df_sum[target] = pd.to_numeric(
+                            df_clean.get(source_col, None), errors="coerce"
+                        )
+                    db.upsert_dataframe(
+                        df_sum, "trading_summary",
+                        conflict_cols=["symbol", "trading_date"]
+                    )
+
+                    # Upsert trading_order_stats
+                    order_cols = [
+                        "symbol", "trading_date",
+                        "total_buy_trade",   "total_sell_trade",
+                        "total_buy_trade_volume", "total_sell_trade_volume",
+                        "average_buy_trade_volume", "average_sell_trade_volume",
+                    ]
+                    df_ord = pd.DataFrame()
+                    df_ord["symbol"]       = df_clean["symbol"]
+                    df_ord["trading_date"] = df_clean["trading_date"]
+                    # Map sang tên cột trong DB
+                    df_ord["buy_orders"]          = pd.to_numeric(df_clean.get("total_buy_trade",          None), errors="coerce")
+                    df_ord["sell_orders"]         = pd.to_numeric(df_clean.get("total_sell_trade",         None), errors="coerce")
+                    df_ord["buy_volume"]          = pd.to_numeric(df_clean.get("total_buy_trade_volume",   None), errors="coerce")
+                    df_ord["sell_volume"]         = pd.to_numeric(df_clean.get("total_sell_trade_volume",  None), errors="coerce")
+                    df_ord["avg_buy_order_volume"]  = pd.to_numeric(df_clean.get("average_buy_trade_volume",  None), errors="coerce")
+                    df_ord["avg_sell_order_volume"] = pd.to_numeric(df_clean.get("average_sell_trade_volume", None), errors="coerce")
+
+                    db.upsert_dataframe(
+                        df_ord, "trading_order_stats",
+                        conflict_cols=["symbol", "trading_date"]
+                    )
+                    log_stage("price_history", symbol, "success", extra={"rows": len(df_clean)})
+
+            except Exception as exc:
+                print(f"    -> Bo qua price_history {symbol}: {exc}")
+                log_stage("price_history", symbol, "error", message=str(exc))
+
+            # --- Put through (giao dịch thỏa thuận) ---
+            try:
+                df_pt = tr.put_through(start=START_DATE, end=TODAY)
+                if len(df_pt) > 0:
+                    save_raw("trading_put_through", symbol, "VCI",
+                             df_pt.to_dict(orient="records"),
+                             {"rows": len(df_pt)})
             except Exception:
                 pass
 
+            # --- Insider deal ---
             try:
-                df_sum = tr.summary(start=START_DATE, end=TODAY)
-                save_raw(
-                    "trading_summary",
-                    symbol,
-                    "VCI",
-                    df_sum.to_dict(orient="records"),
-                    {"rows": len(df_sum), "start_date": START_DATE, "end_date": TODAY},
-                )
-                if len(df_sum) > 0:
-                    df_clean = df_sum.copy()
-                    df_clean["symbol"] = symbol
-
-                    if "trading_date" not in df_clean.columns:
-                        df_clean["trading_date"] = TODAY
-                    if "total_volume" in df_clean.columns:
-                        df_clean["total_trading_vol"] = df_clean["total_volume"]
-                    if "total_value" in df_clean.columns:
-                        df_clean["total_trading_val"] = df_clean["total_value"]
-
-                    expected_cols = [
-                        "symbol",
-                        "trading_date",
-                        "total_trading_vol",
-                        "total_trading_val",
-                        "open_price",
-                        "highest_price",
-                        "lowest_price",
-                        "close_price",
-                    ]
-                    for col in expected_cols:
-                        if col not in df_clean.columns:
-                            df_clean[col] = None
-                    df_clean = df_clean[expected_cols]
-
-                    df_clean["trading_date"] = pd.to_datetime(df_clean["trading_date"]).dt.date
-                    for col in [
-                        "total_trading_vol",
-                        "total_trading_val",
-                        "open_price",
-                        "highest_price",
-                        "lowest_price",
-                        "close_price",
-                    ]:
-                        df_clean[col] = pd.to_numeric(df_clean[col], errors="coerce")
-
-                    db.upsert_dataframe(df_clean, "trading_summary", conflict_cols=["symbol", "trading_date"])
+                df_ins = tr.insider_deal()
+                if len(df_ins) > 0:
+                    save_raw("trading_insider_deal", symbol, "VCI",
+                             df_ins.to_dict(orient="records"),
+                             {"rows": len(df_ins)})
             except Exception:
                 pass
 
             success += 1
             time.sleep(ARGS.stage_sleep)
+
         except Exception as exc:
             log_stage("trading", symbol, "error", message=str(exc))
 
     print(f"\n  Trading xong! Thanh cong: {success}/{len(symbols)}.")
-
 
 def chunk_list(lst, size):
     for i in range(0, len(lst), size):

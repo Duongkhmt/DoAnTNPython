@@ -31,13 +31,23 @@ def _get_model_path() -> str:
     raise FileNotFoundError("No .h5 model file found. Set AI_MODEL_PATH or mount a model file.")
 
 
-def _get_symbol_list(model_path: str) -> list[str]:
+def _get_symbol_list(model_path: str) -> list[str] | None:
     env_symbols = os.getenv("AI_SYMBOLS")
     if env_symbols:
+        if env_symbols.upper() == "ALL":
+            return None
         return [symbol.strip().upper() for symbol in env_symbols.split(",") if symbol.strip()]
-    if "global" in os.path.basename(model_path).lower():
-        return ["HPG", "VNM", "FPT", "TCB", "SSI"]
-    return ["HPG"]
+    
+    # Mặc định trả về None để hệ thống tự động lấy toàn bộ mã từ Database
+    return None
+
+
+def _get_all_symbols_from_db(engine: Any) -> list[str]:
+    """Lấy danh sách tất cả mã cổ phiếu có trong bảng quote_history."""
+    query = text("SELECT DISTINCT symbol FROM quote_history ORDER BY symbol")
+    with engine.begin() as conn:
+        df = pd.read_sql(query, conn)
+    return df["symbol"].tolist()
 
 
 def ensure_prediction_table() -> None:
@@ -96,65 +106,109 @@ def upsert_prediction(engine: Any, symbol: str, predicted_close: float, trend: s
         )
 
 
-def run_predictions(symbols: list[str] | None = None) -> dict[str, Any]:
-    print("\n[AI-Service] Starting batch prediction run...")
+def run_predictions(symbols: list[str] | None = None, batch_size: int = 50) -> dict[str, Any]:
+    print(f"\n[AI-Service] Bắt đầu quy trình dự đoán (Batch Size: {batch_size})...")
     ensure_prediction_table()
 
     db = DatabaseManager()
     engine = db.engine
     if engine is None:
-        raise RuntimeError("Cannot connect to TimescaleDB/PostgreSQL.")
+        raise RuntimeError("Không thể kết nối TimescaleDB/PostgreSQL.")
 
     model_path = _get_model_path()
     model = tf.keras.models.load_model(model_path)
     print(f"[AI-Service] Model loaded: {model_path}")
 
-    symbol_list = symbols or _get_symbol_list(model_path)
+    # Xác định danh sách mã
+    if symbols is None:
+        symbols = _get_symbol_list(model_path)
+    
+    if symbols is None:
+        print("[AI-Service] Đang tải danh sách mã từ Database...")
+        symbols = _get_all_symbols_from_db(engine)
+
+    print(f"[AI-Service] Tổng cộng có {len(symbols)} mã cần xử lý.")
     results = []
 
-    for symbol in symbol_list:
-        df = fetch_prediction_input(engine, symbol)
-        if len(df) < 60:
-            print(f"[AI-Service] Skip {symbol}: not enough rows ({len(df)}).")
-            results.append({"symbol": symbol, "status": "skipped", "reason": "not_enough_rows"})
+    # Chia nhỏ danh sách mã thành các lô (Chunks)
+    for i in range(0, len(symbols), batch_size):
+        current_batch = symbols[i : i + batch_size]
+        print(f"\n[*] Đang xử lý lô {i//batch_size + 1} ({len(current_batch)} mã)...")
+        
+        batch_inputs = []
+        batch_metadata = []
+
+        for symbol in current_batch:
+            try:
+                df = fetch_prediction_input(engine, symbol)
+                if len(df) < 60:
+                    print(f"  — Skip {symbol}: không đủ 60 dòng dữ liệu.")
+                    results.append({"symbol": symbol, "status": "skipped", "reason": "not_enough_rows"})
+                    continue
+
+                dates = df["trading_date"].values
+                data = df[DEFAULT_FEATURES].values
+
+                # Scaling riêng cho từng mã (Quan trọng!)
+                scaler = MinMaxScaler(feature_range=(0, 1))
+                scaled_data = scaler.fit_transform(data)
+                
+                # Lấy 60 ngày cuối
+                x_input = scaled_data[-60:]
+                
+                batch_inputs.append(x_input)
+                batch_metadata.append({
+                    "symbol": symbol,
+                    "scaler": scaler,
+                    "last_actual_price": float(data[-1, 0]),
+                    "last_date": pd.to_datetime(dates[-1])
+                })
+            except Exception as e:
+                print(f"  ✗ Lỗi khi chuẩn bị dữ liệu cho {symbol}: {e}")
+                results.append({"symbol": symbol, "status": "error", "message": str(e)})
+
+        if not batch_inputs:
             continue
 
-        dates = df["trading_date"].values
-        data = df[DEFAULT_FEATURES].values
+        # Dự đoán hàng loạt cho cả lô
+        X_array = np.array(batch_inputs)
+        all_preds_scaled = model.predict(X_array, verbose=0)
 
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(data)
-        x_input = np.array([scaled_data[-60:]])
+        # Xử lý kết quả dự đoán
+        for idx, pred_scaled in enumerate(all_preds_scaled):
+            meta = batch_metadata[idx]
+            
+            # Đảo ngược chuẩn hóa (lấy cột đầu tiên là Close)
+            dummy_matrix = np.zeros((1, len(DEFAULT_FEATURES)))
+            dummy_matrix[0, 0] = pred_scaled[0]
+            predicted_close = float(meta["scaler"].inverse_transform(dummy_matrix)[0, 0])
 
-        pred_scaled = model.predict(x_input, verbose=0)
-        dummy_matrix = np.zeros((1, len(DEFAULT_FEATURES)))
-        dummy_matrix[0, 0] = pred_scaled[0, 0]
-        predicted_close = float(scaler.inverse_transform(dummy_matrix)[0, 0])
+            trend = "TANG" if predicted_close > meta["last_actual_price"] else "GIAM"
 
-        last_actual_price = float(data[-1, 0])
-        trend = "TANG" if predicted_close > last_actual_price else "GIAM"
+            # Tính ngày mục tiêu
+            target_date = meta["last_date"] + pd.Timedelta(days=1)
+            if target_date.weekday() >= 5:
+                target_date += pd.Timedelta(days=(7 - target_date.weekday()))
 
-        last_date = pd.to_datetime(dates[-1])
-        target_date = last_date + pd.Timedelta(days=1)
-        if target_date.weekday() >= 5:
-            target_date += pd.Timedelta(days=(7 - target_date.weekday()))
-
-        upsert_prediction(engine, symbol, predicted_close, trend, target_date.date(), model_path)
-        print(f"[AI-Service] Predicted {symbol}: {predicted_close:,.0f} | {trend} | {target_date.date()}")
-        results.append(
-            {
-                "symbol": symbol,
-                "status": "predicted",
-                "predicted_close": predicted_close,
-                "trend": trend,
-                "target_date": str(target_date.date()),
-            }
-        )
+            try:
+                upsert_prediction(engine, meta["symbol"], predicted_close, trend, target_date.date(), model_path)
+                print(f"  ✔ Predicted {meta['symbol']}: {predicted_close:,.0f} | {trend} | {target_date.date()}")
+                results.append({
+                    "symbol": meta["symbol"],
+                    "status": "predicted",
+                    "predicted_close": predicted_close,
+                    "trend": trend,
+                    "target_date": str(target_date.date()),
+                })
+            except Exception as e:
+                print(f"  ✗ Lỗi khi lưu {meta['symbol']}: {e}")
+                results.append({"symbol": meta["symbol"], "status": "error", "message": str(e)})
 
     return {
         "status": "completed",
         "model_used": os.path.basename(model_path),
-        "symbols": results,
+        "total_symbols": len(symbols),
+        "processed": len(results),
     }
 
 
