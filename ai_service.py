@@ -142,7 +142,7 @@ def run_predictions(symbols: list[str] | None = None, batch_size: int = 50) -> d
             try:
                 df = fetch_prediction_input(engine, symbol)
                 if len(df) < 60:
-                    print(f"  — Skip {symbol}: không đủ 60 dòng dữ liệu.")
+                    print(f"  - Skip {symbol}: khong du 60 dong du lieu.")
                     results.append({"symbol": symbol, "status": "skipped", "reason": "not_enough_rows"})
                     continue
 
@@ -164,51 +164,85 @@ def run_predictions(symbols: list[str] | None = None, batch_size: int = 50) -> d
                     "last_date": pd.to_datetime(dates[-1])
                 })
             except Exception as e:
-                print(f"  ✗ Lỗi khi chuẩn bị dữ liệu cho {symbol}: {e}")
+                print(f"  [ERROR] Loi khi chuan bi du lieu cho {symbol}: {e}")
                 results.append({"symbol": symbol, "status": "error", "message": str(e)})
 
         if not batch_inputs:
             continue
 
-        # Dự đoán hàng loạt cho cả lô
+        # Dự đoán hàng loạt cho bước đầu tiên (t+1)
         X_array = np.array(batch_inputs)
-        all_preds_scaled = model.predict(X_array, verbose=0)
-
-        # Xử lý kết quả dự đoán
-        for idx, pred_scaled in enumerate(all_preds_scaled):
-            meta = batch_metadata[idx]
+        
+        # Chúng ta sẽ thực hiện dự báo 7 ngày liên tiếp (Recursive Multi-step)
+        FORECAST_DAYS = 7
+        
+        for step in range(FORECAST_DAYS):
+            # Dự đoán cho cả batch hiện tại
+            X_array = np.array(batch_inputs)
+            all_preds_scaled = model.predict(X_array, verbose=0)
             
-            # Đảo ngược chuẩn hóa (lấy cột đầu tiên là Close)
-            dummy_matrix = np.zeros((1, len(DEFAULT_FEATURES)))
-            dummy_matrix[0, 0] = pred_scaled[0]
-            predicted_close = float(meta["scaler"].inverse_transform(dummy_matrix)[0, 0])
+            new_batch_inputs = []
+            
+            for idx, pred_scaled in enumerate(all_preds_scaled):
+                meta = batch_metadata[idx]
+                
+                # 1. Giải mã giá dự báo
+                dummy_matrix = np.zeros((1, len(DEFAULT_FEATURES)))
+                dummy_matrix[0, 0] = pred_scaled[0]
+                predicted_close = float(meta["scaler"].inverse_transform(dummy_matrix)[0, 0])
+                
+                # 2. Tính ngày mục tiêu (Bỏ qua cuối tuần)
+                target_date = meta["last_date"] + pd.Timedelta(days=1)
+                while target_date.weekday() >= 5:
+                    target_date += pd.Timedelta(days=1)
+                
+                # 3. Xác định xu hướng so với giá thực tế cuối cùng
+                trend = "TANG" if predicted_close > meta["last_actual_price"] else "GIAM"
+                
+                # 4. Lưu vào database
+                try:
+                    upsert_prediction(engine, meta["symbol"], predicted_close, trend, target_date.date(), model_path)
+                    if step == 0:
+                         print(f"  [OK] {meta['symbol']} step {step+1}: {predicted_close:,.0f} | {target_date.date()}")
+                except Exception as e:
+                    print(f"  [ERROR] Loi khi luu {meta['symbol']} buoc {step+1}: {e}")
 
-            trend = "TANG" if predicted_close > meta["last_actual_price"] else "GIAM"
-
-            # Tính ngày mục tiêu
-            target_date = meta["last_date"] + pd.Timedelta(days=1)
-            if target_date.weekday() >= 5:
-                target_date += pd.Timedelta(days=(7 - target_date.weekday()))
-
-            try:
-                upsert_prediction(engine, meta["symbol"], predicted_close, trend, target_date.date(), model_path)
-                print(f"  ✔ Predicted {meta['symbol']}: {predicted_close:,.0f} | {trend} | {target_date.date()}")
-                results.append({
-                    "symbol": meta["symbol"],
-                    "status": "predicted",
-                    "predicted_close": predicted_close,
-                    "trend": trend,
-                    "target_date": str(target_date.date()),
-                })
-            except Exception as e:
-                print(f"  ✗ Lỗi khi lưu {meta['symbol']}: {e}")
-                results.append({"symbol": meta["symbol"], "status": "error", "message": str(e)})
+                # 5. Chuẩn bị cho bước dự báo tiếp theo (Recursive)
+                # Cập nhật meta cho vòng lặp tiếp theo
+                meta["last_date"] = target_date
+                
+                # Cập nhật window (X_input)
+                # Lấy window hiện tại của mã này
+                current_window = batch_inputs[idx] # (60, 7)
+                
+                # Tạo dòng mới cho window
+                # [close, volume, sma_10, sma_20, macd, bb_upper, bb_lower]
+                # Giả định các chỉ số kỹ thuật giữ nguyên hoặc biến động nhẹ để duy trì window
+                new_row = current_window[-1].copy()
+                new_row[0] = pred_scaled[0] # Cập nhật Close dự báo (đã scale)
+                
+                # Cập nhật SMA đơn giản (nếu muốn ngoằn ngoèo hơn)
+                # Ở đây chúng ta giữ các features khác để tránh nhiễu quá mức trong 7 ngày
+                
+                # Slide window
+                next_window = np.append(current_window[1:], [new_row], axis=0)
+                new_batch_inputs.append(next_window)
+                
+                if step == 0:
+                    results.append({
+                        "symbol": meta["symbol"],
+                        "status": "predicted",
+                        "steps": FORECAST_DAYS
+                    })
+            
+            # Cập nhật batch_inputs cho ngày tiếp theo
+            batch_inputs = new_batch_inputs
 
     return {
         "status": "completed",
+        "forecast_days": 7,
         "model_used": os.path.basename(model_path),
-        "total_symbols": len(symbols),
-        "processed": len(results),
+        "total_symbols": len(symbols)
     }
 
 

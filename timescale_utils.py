@@ -48,9 +48,9 @@ class DatabaseManager:
             with self.engine.connect() as conn:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;"))
                 if hasattr(conn, 'commit'): conn.commit()
-            print(f"✓ Kết nối Database thành công: {database}@{host}:{port}")
+            print(f"[OK] Ket noi Database thanh cong: {database}@{host}:{port}")
         except Exception as e:
-            print(f"✗ Lỗi kết nối TimescaleDB: {e}")
+            print(f"[ERROR] Loi ket noi TimescaleDB: {e}")
             self.engine = None
 
     # ------------------------------------------------------------------ #
@@ -65,9 +65,9 @@ class DatabaseManager:
                     if stmt:
                         conn.execute(text(stmt))
                 if hasattr(conn, 'commit'): conn.commit()
-            print(f"  ✓ {label}")
+            print(f"  [OK] {label}")
         except Exception as e:
-            print(f"  ✗ {label}: {e}")
+            print(f"  [ERROR] {label}: {e}")
 
     # ------------------------------------------------------------------ #
     #  UPSERT qua Temp Table                                               #
@@ -100,10 +100,10 @@ class DatabaseManager:
                 conn.execute(text(sql))
                 conn.execute(text(f"DROP TABLE IF EXISTS {temp}"))
                 if hasattr(conn, 'commit'): conn.commit()
-            print(f"  ✓ UPSERT {len(df)} dòng → '{table_name}'")
+            print(f"  [OK] UPSERT {len(df)} dong -> '{table_name}'")
             return True
         except Exception as e:
-            print(f"  ✗ Lỗi upsert '{table_name}': {e}")
+            print(f"  [ERROR] Loi upsert '{table_name}': {e}")
             try:
                 with self.engine.connect() as conn:
                     conn.execute(text(f"DROP TABLE IF EXISTS {temp}"))
@@ -420,18 +420,18 @@ class DatabaseManager:
             end:   Ngày kết thúc, mặc định NULL (= đến hôm nay)
         """
         end_val = f"'{end}'" if end else "NULL"
-        print(f"\n⏳ Đang backfill Continuous Aggregates từ {start} đến {end_val}...")
-        print("   (Có thể mất vài phút nếu có nhiều năm dữ liệu)\n")
+        print(f"\n... Dang backfill Continuous Aggregates tu {start} xuong {end_val}...")
+        print("   (Co the mat vai phut neu co nhieu nam du lieu)\n")
 
         self._exec(
             f"CALL refresh_continuous_aggregate('quote_weekly', '{start}', {end_val})",
-            "Backfill quote_weekly hoàn tất"
+            "Backfill quote_weekly hoan tat"
         )
         self._exec(
             f"CALL refresh_continuous_aggregate('quote_monthly', '{start}', {end_val})",
-            "Backfill quote_monthly hoàn tất"
+            "Backfill quote_monthly hoan tat"
         )
-        print("\n✅ Backfill xong! Từ nay policy sẽ tự cập nhật hằng ngày.")
+        print("\n[DONE] Backfill xong! Tu nay policy se tu cap nhat hang ngay.")
 
     # ------------------------------------------------------------------ #
     #  RETENTION POLICY                                                    #
@@ -476,9 +476,9 @@ class DatabaseManager:
         self.create_retention_policies()
 
         print("\n" + "=" * 55)
-        print("✅ Setup hoàn tất — tất cả 7 bảng sẵn sàng")
+        print("[DONE] Setup hoan tat - tat ca 7 bang san sang")
         print()
-        print("⚠️  SAU KHI CÀO XONG LỊCH SỬ, chạy 1 lần duy nhất:")
+        print("[WARN] SAU KHI CAO XONG LICH SU, chay 1 lan duy nhat:")
         print("   db.refresh_historical_aggregates(start='2024-01-01')")
         print("=" * 55 + "\n")
 

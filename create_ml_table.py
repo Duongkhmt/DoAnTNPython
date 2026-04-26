@@ -7,7 +7,7 @@ def create_predictions_table():
     engine = db.engine
     
     if engine is None:
-        print("❌ Lỗi: Không thể kết nối Database PostgreSQL cục bộ!")
+        print("[ERROR] Khong the ket noi Database PostgreSQL!")
         return
         
     sql = """
@@ -31,9 +31,9 @@ def create_predictions_table():
     try:
         with engine.begin() as conn:
             conn.execute(text(sql))
-        print("✅ Đã tạo thành công bảng `ml_predictions` trong Database!")
+        print("[OK] Da tao thanh cong bang `ml_predictions` trong Database!")
     except Exception as e:
-        print(f"❌ Có lỗi khi tạo bảng: {e}")
+        print(f"[ERROR] Co loi khi tao bang: {e}")
 
 if __name__ == "__main__":
     create_predictions_table()
