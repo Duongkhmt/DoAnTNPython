@@ -328,6 +328,23 @@ class DatabaseManager:
             migrate_data   => TRUE
         )
         """, "Hypertable trading_price_depth")
+
+    def create_table_wyckoff_analysis(self):
+        print("\n[wyckoff_analysis]")
+        self._exec("""
+        CREATE TABLE IF NOT EXISTS wyckoff_analysis (
+            symbol        VARCHAR(20) PRIMARY KEY,
+            phase         VARCHAR(10),
+            schematic     VARCHAR(50),
+            tr_low        FLOAT,
+            tr_high       FLOAT,
+            last_close    FLOAT,
+            last_date     DATE,
+            risk_reward   FLOAT,
+            data_json     JSONB,
+            updated_at    TIMESTAMPTZ DEFAULT NOW()
+        )
+        """, "Table wyckoff_analysis")
     # ------------------------------------------------------------------ #
     #  CONTINUOUS AGGREGATES                                               #
     # ------------------------------------------------------------------ #
@@ -468,6 +485,7 @@ class DatabaseManager:
         self.create_table_trading()
         self.create_table_trading_summary()
         self.create_table_order_stats()
+        self.create_table_wyckoff_analysis()
 
         print("\n── CONTINUOUS AGGREGATES ─────────────────────────────")
         self.create_continuous_aggregates()
