@@ -1,0 +1,82 @@
+================================================================================
+TÀI LIỆU: HƯỚNG DẪN LUỒNG VẬN HÀNH, CẤU TRÚC DỮ LIỆU & AI DỰ ĐOÁN
+================================================================================
+
+1. LUỒNG HOẠT ĐỘNG VẬN HÀNH CHO NGÀY MỚI (DAILY PIPELINE)
+--------------------------------------------------------------------------------
+Để hệ thống cập nhật dữ liệu chuẩn xác cho một ngày giao dịch mới (thường chạy tự động vào cuối ngày lúc 18:00 qua Apache Airflow), hệ thống cần chạy tuần tự các lớp (scripts) sau:
+
+[Bước 1] Kéo dữ liệu thô (Raw Data Sync)
+- File thực thi: `python test.py --daily`
+- Nhiệm vụ: Tự động kết nối đến các nguồn VNStock (VND, VCI) để cập nhật thông tin mới nhất. Nó quét các mã cổ phiếu và tải về lịch sử giá (`quote_history`), thông tin giao dịch khối ngoại/tự doanh (`trading`), lệnh mua/bán (`trading_order_stats`), và thông tin tài chính/công ty.
+- Kết quả: Dữ liệu được ghi thẳng vào cơ sở dữ liệu TimescaleDB.
+
+[Bước 2] Tính toán Chỉ báo Kỹ thuật (Technical Indicators)
+- File thực thi: `python compute_indicators.py --daily`
+- Nhiệm vụ: Đọc dữ liệu giá từ bảng `quote_history` (giới hạn 14 ngày gần nhất để tăng tốc), tính toán hàng loạt chỉ báo như SMA, MACD, RSI, ADX, Bollinger Bands, và nhận diện mẫu hình nến (Doji, Hammer, Engulfing,...).
+- Kết quả: Ghi đè/cập nhật dữ liệu vào bảng `technical_indicators`.
+
+[Bước 3] Phân tích Dòng tiền Wyckoff & VSA (Tuỳ chọn nhưng quan trọng)
+- File thực thi: `python wyckoff_service.py`
+- Nhiệm vụ: Quét lại biểu đồ giá, tìm kiếm các dấu hiệu gom hàng (Accumulation) hoặc phân phối (Distribution) theo lý thuyết Wyckoff (Phase A, B, C, D) và các điểm VSA (No Demand, No Supply, Stopping Volume...).
+- Kết quả: Lưu kết quả phân tích vào bảng `wyckoff_analysis`.
+
+[Bước 4] Chạy mô hình dự đoán AI (ML Prediction)
+- File thực thi: `python daily_predict.py`
+- Nhiệm vụ: Nạp mô hình XGBoost (`xgb_direction_5d.pkl`) đã được huấn luyện. Đọc dữ liệu chỉ báo từ `technical_indicators` của phiên giao dịch mới nhất, tiến hành chấm điểm AI cho tất cả cổ phiếu trên sàn.
+- Kết quả: Ghi dự đoán vào bảng `ml_predictions` và in ra báo cáo thống kê.
+
+
+2. HỆ THỐNG CÁC BẢNG DỮ LIỆU (DATABASE SCHEMA)
+--------------------------------------------------------------------------------
+Cơ sở dữ liệu sử dụng TimescaleDB (tối ưu cực tốt cho chuỗi thời gian) và được chia thành 4 nhóm chính:
+
+A. Nhóm Metadata (Dữ liệu Tĩnh)
+- `listing`: Danh sách toàn bộ mã chứng khoán, tên công ty, loại hình, sàn giao dịch (HOSE, HNX,...).
+- `company`: Tổng quan doanh nghiệp, nhóm ngành (Industry/Sector).
+- `finance`: Các chỉ số tài chính cơ bản, tỷ số tài chính của doanh nghiệp.
+
+B. Nhóm Time-series (Chuỗi thời gian - Tốc độ cao)
+- `quote_history`: Lịch sử giá (Open, High, Low, Close, Volume) tính theo ngày. Đây là bảng trái tim của dữ liệu.
+- `trading`: Lịch sử giao dịch chi tiết của khối ngoại và khối tự doanh.
+- `trading_summary`: Tổng hợp giao dịch trong ngày (tổng khối lượng, giá trị).
+- `trading_order_stats`: Thống kê lệnh mua, lệnh bán, trung bình khối lượng mỗi lệnh (để đo lường sức ép mua/bán).
+- `trading_price_depth`: Chi tiết bước giá mua bán.
+
+C. Nhóm Continuous Aggregates (Tổng hợp tự động)
+- `quote_weekly`: Dữ liệu nến Tuần tự động gộp từ nến ngày.
+- `quote_monthly`: Dữ liệu nến Tháng tự động gộp từ nến ngày.
+(Được TimescaleDB cập nhật ngầm theo thời gian thực)
+
+D. Nhóm Phân tích & AI
+- `technical_indicators`: Chứa hơn 30+ loại chỉ báo kỹ thuật được tính toán sẵn cho từng ngày giao dịch.
+- `wyckoff_analysis`: Thông tin phân tích chu kỳ giá, VSA signals, điểm cắt lỗ, mục tiêu chốt lời.
+- `ml_predictions`: Toàn bộ dữ liệu dự đoán của mô hình XGBoost (ai_score, tín hiệu, xu hướng).
+
+
+3. PHẦN DỰ ĐOÁN AI LÀM ĐƯỢC NHỮNG GÌ?
+--------------------------------------------------------------------------------
+Mô hình AI (thông qua `daily_predict.py`) là một hệ thống phân loại học máy (Machine Learning) mạnh mẽ dự đoán hành vi cổ phiếu cho 5 phiên giao dịch tới (Target: T+5). Cụ thể AI làm được:
+
+- [1] Chấm điểm xác suất (AI Score): 
+Đưa ra 1 điểm số từ 0.0 đến 1.0 đại diện cho xác suất giá cổ phiếu sẽ TĂNG LÊN sau 5 ngày tới.
+
+- [2] Phân loại Tín Hiệu (AI Signal) rõ ràng: 
+Dựa vào điểm AI Score, hệ thống tự chia tín hiệu dễ hiểu cho nhà đầu tư:
+  + Điểm >= 0.70: MUA_MANH (Rất an toàn để vào lệnh)
+  + Điểm >= 0.60: MUA (Đang có đà tăng)
+  + Điểm <= 0.40: BAN (Nguy cơ suy giảm)
+  + Điểm <= 0.30: BAN_MANH (Nên thoát hàng gấp)
+  + Còn lại: TRUNG_TINH (Chờ thêm tín hiệu)
+
+- [3] Phát hiện tín hiệu đảo chiều (Reversal Detection): 
+So sánh tín hiệu hôm nay với ngày hôm trước. Ví dụ cảnh báo những mã hôm qua AI bảo "MUA" nhưng hôm nay đã gãy trend chuyển sang "BÁN".
+
+- [4] Tự động lọc và Báo cáo hằng ngày:
+  + Tính toán nhanh tổng số mã được AI quét.
+  + Gợi ý ra danh sách "Top 20 cổ phiếu MUA_MANH nhất" hằng ngày.
+  + Gợi ý danh sách "Top 10 cổ phiếu BÁN_MANH nhất" hằng ngày.
+  + Báo cáo này có thể cấu hình bắn lên Telegram/Email nếu cần thiết.
+
+- [5] Cung cấp dữ liệu trực quan cho Dashboard:
+Toàn bộ các tín hiệu này được lưu trong bảng `ml_predictions`, giúp Frontend (ReactJS) dễ dàng query và vẽ bảng xếp hạng, vẽ biểu đồ cho người dùng cuối nhìn thấy một cách trực quan.

@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument("--skip-compute", action="store_true", help="Bo qua buoc compute indicators")
     parser.add_argument("--skip-ai", action="store_true", help="Bo qua buoc AI prediction")
     parser.add_argument("--min-quote-rows", type=int, default=30, help="So dong quote toi thieu")
-    parser.add_argument("--min-feature-rows", type=int, default=60, help="So dong feature toi thieu cho AI")
+    parser.add_argument("--min-feature-rows", type=int, default=1, help="So dong feature toi thieu cho AI")
     parser.add_argument("--json", action="store_true", help="In ket qua dang JSON o cuoi")
     return parser.parse_args()
 
@@ -124,21 +124,21 @@ def check_indicators(engine, symbol: str):
 
 def check_ai_features(symbol: str):
     print_step(f"[4] KIEM TRA INPUT FEATURES CHO AI {symbol}")
-    from ai_service import fetch_prediction_input
+    from daily_predict import fetch_latest_indicator_frame, get_db_engine
 
-    db = get_db()
-    df = fetch_prediction_input(db.engine, symbol)
+    df = fetch_latest_indicator_frame(get_db_engine())
+    df = df[df["symbol"] == symbol]
     print(f"feature_rows={len(df)}")
     if len(df) > 0:
-        print(df.tail(3).to_string(index=False))
+        print(df.tail(1).to_string(index=False))
     return len(df)
 
 
 def run_ai_prediction(symbol: str):
     print_step(f"[5] CHAY AI PREDICTION CHO {symbol}")
-    from ai_service import run_predictions
+    from daily_predict import run_daily_prediction
 
-    result = run_predictions([symbol])
+    result = run_daily_prediction()
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return result
 
@@ -148,10 +148,10 @@ def check_latest_prediction(engine, symbol: str):
     row = query_one_row(
         engine,
         """
-        SELECT symbol, predict_date, target_date, predicted_close, trend, model_used, created_at
+        SELECT symbol, predict_date, target_date, ai_score, ai_signal, model_name, created_at
         FROM ml_predictions
         WHERE symbol = :sym
-        ORDER BY created_at DESC
+        ORDER BY predict_date DESC, created_at DESC
         LIMIT 1
         """,
         {"sym": symbol},
@@ -162,9 +162,9 @@ def check_latest_prediction(engine, symbol: str):
         "symbol": row["symbol"],
         "predict_date": str(row["predict_date"]),
         "target_date": str(row["target_date"]),
-        "predicted_close": float(row["predicted_close"]),
-        "trend": row["trend"],
-        "model_used": row["model_used"],
+        "ai_score": float(row["ai_score"]) if row["ai_score"] is not None else None,
+        "ai_signal": row["ai_signal"],
+        "model_name": row["model_name"],
         "created_at": str(row["created_at"]),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

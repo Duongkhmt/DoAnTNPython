@@ -26,6 +26,10 @@ plotly>=5.17.0
 # Optional: Data science
 scikit-learn>=1.3.0
 scipy>=1.11.0
+xgboost>=2.0.0
+matplotlib>=3.7.0
+seaborn>=0.13.0
+joblib>=1.3.0
 
 # Utilities
 requests>=2.31.0

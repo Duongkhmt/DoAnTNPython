@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     adx_14          FLOAT,
     di_plus         FLOAT,
     di_minus        FLOAT,
+    rsi_14          FLOAT,
+    stoch_k         FLOAT,
+    stoch_d         FLOAT,
+    williams_r      FLOAT,
 
     -- Volatility
     bb_upper        FLOAT,
@@ -105,6 +109,10 @@ CREATE INDEX IF NOT EXISTS idx_ti_date   ON technical_indicators (trading_date);
 def create_table():
     with engine.begin() as conn:
         conn.execute(text(CREATE_TABLE_SQL))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS rsi_14 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS stoch_k FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS stoch_d FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS williams_r FLOAT"))
     print("✅ Bảng technical_indicators đã sẵn sàng.")
 
 
@@ -118,6 +126,7 @@ def _ema(series: pd.Series, span: int) -> pd.Series:
 
 def compute_trend(df: pd.DataFrame) -> pd.DataFrame:
     c = df["close"]
+    hi, lo, cl = df["high"], df["low"], df["close"]
     df["sma_10"] = c.rolling(10).mean()
     df["sma_20"] = c.rolling(20).mean()
     df["sma_50"] = c.rolling(50).mean()
@@ -127,8 +136,26 @@ def compute_trend(df: pd.DataFrame) -> pd.DataFrame:
     df["macd_signal"] = _ema(df["macd"], 9)
     df["macd_hist"]   = df["macd"] - df["macd_signal"]
 
+    # RSI(14)
+    delta = c.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    avg_loss = loss.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    df["rsi_14"] = 100 - (100 / (1 + rs))
+
+    # Stochastic %K(14), %D(3)
+    low_14 = lo.rolling(14).min()
+    high_14 = hi.rolling(14).max()
+    stoch_range = (high_14 - low_14).replace(0, np.nan)
+    df["stoch_k"] = 100 * (c - low_14) / stoch_range
+    df["stoch_d"] = df["stoch_k"].rolling(3).mean()
+
+    # Williams %R(14)
+    df["williams_r"] = -100 * (high_14 - c) / stoch_range
+
     # ADX(14)
-    hi, lo, cl = df["high"], df["low"], df["close"]
     prev_cl = cl.shift(1)
     tr = pd.concat([
         hi - lo,
@@ -283,6 +310,7 @@ INDICATOR_COLS = [
     "symbol", "trading_date",
     "sma_10", "sma_20", "sma_50", "ema_12", "ema_26",
     "macd", "macd_signal", "macd_hist", "adx_14", "di_plus", "di_minus",
+    "rsi_14", "stoch_k", "stoch_d", "williams_r",
     "bb_upper", "bb_mid", "bb_lower", "bb_pct_b", "bb_width", "atr_14",
     "obv", "vwap", "cmf_20", "volume_sma_20", "volume_ratio",
     "candle_body_size", "candle_upper_wick", "candle_lower_wick",
