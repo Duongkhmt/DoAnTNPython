@@ -50,7 +50,7 @@ def parse_args():
 ARGS = parse_args()
 
 if ARGS.daily:
-    START_DATE = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+    START_DATE = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     print(f"[*] CHE DO DONG BO HANG NGAY: {START_DATE} den nay")
 else:
     START_DATE = "2024-01-01"
@@ -496,6 +496,13 @@ def main():
     if ARGS.backfill:
         print("\nBackfill Continuous Aggregates...")
         db.refresh_historical_aggregates(start=START_DATE)
+
+    print("\nRefreshing Dashboard Views...")
+    try:
+        import create_dashboard_views
+        create_dashboard_views.refresh_views()
+    except Exception as e:
+        print(f"Lỗi khi refresh dashboard views: {e}")
 
 
 if __name__ == "__main__":

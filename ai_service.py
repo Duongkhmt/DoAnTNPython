@@ -32,7 +32,7 @@ def _read_sql(sql: str, params: dict[str, Any] | None = None) -> pd.DataFrame:
 
 def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
     """Thay thế NaN/NaT bằng None để tránh lỗi JSON Decode Error do FastAPI trả về NaN unquoted."""
-    return df.where(pd.notnull(df), None)
+    return df.astype(object).where(pd.notnull(df), None)
 
 
 def _latest_predict_date() -> Any:
@@ -83,7 +83,13 @@ def screening_today(
     predict_date = _latest_predict_date()
     signal_clause, extra_params = _signal_filter_clause(signal)
     params: dict[str, Any] = {"predict_date": predict_date, **extra_params}
-    filters = [signal_clause, "(:exchange IS NULL OR l.exchange = :exchange)", "(:industry IS NULL OR l.industry = :industry)"]
+    filters = [
+        signal_clause,
+        "(:exchange IS NULL OR ls.exchange = :exchange)",
+        "(:industry IS NULL OR l.industry = :industry)",
+        "t.volume_sma_20 > 100000",
+        "ls.exchange IN ('HOSE', 'HNX')"
+    ]
     params["exchange"] = exchange
     params["industry"] = industry
 
@@ -96,11 +102,11 @@ def screening_today(
         t.rsi_14,
         t.macd,
         t.volume_ratio,
-        ROUND((COALESCE(tr.fr_buy_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS fr_buy_value,
-        ROUND((COALESCE(tr.fr_sell_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS fr_sell_value,
-        ROUND((COALESCE(tr.prop_buy_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS td_buy_value,
-        ROUND((COALESCE(tr.prop_sell_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS td_sell_value,
-        l.exchange,
+        ROUND(COALESCE(tr.fr_buy_value, 0)::numeric, 3) AS fr_buy_value,
+        ROUND(COALESCE(tr.fr_sell_value, 0)::numeric, 3) AS fr_sell_value,
+        ROUND(COALESCE(tr.prop_buy_value, 0)::numeric, 3) AS td_buy_value,
+        ROUND(COALESCE(tr.prop_sell_value, 0)::numeric, 3) AS td_sell_value,
+        ls.exchange,
         l.industry,
         l.sector
     FROM ml_predictions p
@@ -110,10 +116,16 @@ def screening_today(
     LEFT JOIN quote_history q
       ON q.symbol = p.symbol
      AND q.trading_date = p.predict_date
-    LEFT JOIN trading tr
-      ON tr.symbol = p.symbol
-     AND tr.trading_date = p.predict_date
-    LEFT JOIN listing l
+    LEFT JOIN LATERAL (
+        SELECT fr_buy_value, fr_sell_value, prop_buy_value, prop_sell_value
+        FROM trading
+        WHERE symbol = p.symbol AND trading_date <= p.predict_date
+        ORDER BY trading_date DESC
+        LIMIT 1
+    ) tr ON true
+    LEFT JOIN listing ls
+      ON ls.symbol = p.symbol
+    LEFT JOIN company l
       ON l.symbol = p.symbol
     WHERE p.predict_date = :predict_date
       AND {" AND ".join(filters)}
@@ -155,7 +167,7 @@ def stock_detail(symbol: str):
      AND t.trading_date = q.trading_date
     WHERE q.symbol = :symbol
     ORDER BY q.trading_date DESC
-    LIMIT 60
+    LIMIT 100
     """
     indicator_sql = """
     SELECT *
@@ -179,10 +191,10 @@ def stock_detail(symbol: str):
         tr.fr_sell_volume,
         tr.prop_buy_volume,
         tr.prop_sell_volume,
-        ROUND((COALESCE(tr.fr_buy_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS fr_buy_value,
-        ROUND((COALESCE(tr.fr_sell_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS fr_sell_value,
-        ROUND((COALESCE(tr.prop_buy_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS prop_buy_value,
-        ROUND((COALESCE(tr.prop_sell_volume, 0) * COALESCE(q.close, 0) / 1000000000.0)::numeric, 3) AS prop_sell_value
+        ROUND(COALESCE(tr.fr_buy_value, 0)::numeric, 3) AS fr_buy_value,
+        ROUND(COALESCE(tr.fr_sell_value, 0)::numeric, 3) AS fr_sell_value,
+        ROUND(COALESCE(tr.prop_buy_value, 0)::numeric, 3) AS prop_buy_value,
+        ROUND(COALESCE(tr.prop_sell_value, 0)::numeric, 3) AS prop_sell_value
     FROM trading tr
     LEFT JOIN quote_history q
       ON q.symbol = tr.symbol
@@ -258,9 +270,8 @@ def screening_history(days: int = Query(default=30, ge=1, le=365)):
         .groupby("predict_date", as_index=False)
         .agg(total_predictions=("symbol", "count"), win_rate=("is_correct", "mean"))
     )
-    # Ép kiểu win_rate về dạng số thực (float) trước khi nhân và làm tròn
-    stats["win_rate"] = pd.to_numeric(stats["win_rate"], errors="coerce")
-    stats["win_rate"] = (stats["win_rate"] * 100).round(2)
+    # Ép kiểu win_rate về dạng số thực (float) và làm tròn (không nhân 100 nữa)
+    stats["win_rate"] = pd.to_numeric(stats["win_rate"], errors="coerce").round(4)
     
     history = _clean_df(history)
     stats = _clean_df(stats)
@@ -306,7 +317,7 @@ def market_overview():
         AVG(p.ai_score) AS avg_ai_score,
         COUNT(*) AS total_symbols
     FROM ml_predictions p
-    LEFT JOIN listing l
+    LEFT JOIN company l
       ON l.symbol = p.symbol
     WHERE p.predict_date = :predict_date
       AND l.industry IS NOT NULL

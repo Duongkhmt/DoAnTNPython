@@ -1,0 +1,68 @@
+================================================================================
+TÀI LIỆU HƯỚNG DẪN SỬ DỤNG VÀ ĐỌC HIỂU DỮ LIỆU AI DASHBOARD
+DỰ ÁN: HỆ THỐNG AI DỰ BÁO CHỨNG KHOÁN VIỆT NAM
+================================================================================
+
+I. TỔNG QUAN VỀ MÔ HÌNH AI (XGBoost)
+Hệ thống sử dụng mô hình học máy Gradient Boosting (XGBoost) để phân tích các chỉ báo kỹ thuật (Technical Indicators) và dữ liệu giao dịch lịch sử.
+- Mục tiêu: Dự báo xu hướng giá cổ phiếu (Tăng/Giảm) trong vòng 5 ngày giao dịch tới (T+5).
+- Bộ lọc chất lượng: Mô hình chỉ phân tích và đưa ra khuyến nghị cho các mã cổ phiếu trên sàn HOSE và HNX có thanh khoản trung bình 20 phiên (Volume SMA 20) lớn hơn 100.000 cổ phiếu. Điều này giúp loại bỏ các mã rác, mã bo cung, hoặc mã UPCOM không có thanh khoản thực tế.
+- AI Score: Là xác suất (từ 0.0 đến 1.0) mô hình dự báo cổ phiếu sẽ TĂNG. Score càng gần 1.0, tỷ lệ tăng giá càng cao.
+- Phân loại tín hiệu (AI Signal):
+  + >= 0.70: MUA_MANH (Strong Buy)
+  + >= 0.60: MUA (Buy)
+  + <= 0.40: BAN (Sell)
+  + <= 0.30: BAN_MANH (Strong Sell)
+  + Còn lại: TRUNG_TINH (Neutral)
+
+II. Ý NGHĨA CỦA CÁC BIỂU ĐỒ VÀ BẢNG DỮ LIỆU TRÊN DASHBOARD
+Dashboard được thiết kế để nhà đầu tư (NĐT) đi từ cái nhìn Tổng quan thị trường (Top-Down) đến chi tiết từng mã cổ phiếu (Bottom-Up).
+
+1. Biểu đồ "Phân bổ AI Signal" (Live Distribution - Bar Chart)
+- Hiển thị gì: Số lượng mã cổ phiếu đang nằm ở các trạng thái khuyến nghị khác nhau (MUA MẠNH, MUA, TRUNG TÍNH, BÁN, BÁN MẠNH).
+- Đọc hiểu: 
+  + Giúp NĐT nhận định NHỊP ĐẬP CHUNG của thị trường.
+  + Nếu cột MUA/MUA MẠNH áp đảo: Thị trường đang trong pha Uptrend mạnh hoặc có sự bùng nổ diện rộng, NĐT có thể tự tin giải ngân.
+  + Nếu cột BÁN/BÁN MẠNH chiếm đa số: Áp lực chốt lời/bán tháo đang lớn, NĐT nên thu gọn danh mục, ôm tiền mặt và chờ đợi.
+
+2. Bảng "Nhóm ngành mạnh / yếu" (Industry Ranking)
+- Hiển thị gì: Top 5 và Bottom 5 các ngành có trung bình điểm AI (AI Score) cao nhất và thấp nhất.
+- Đọc hiểu:
+  + Dòng tiền trên thị trường luôn luân chuyển giữa các nhóm ngành. Bảng này giúp NĐT trả lời câu hỏi: "Tiền đang vào nhóm nào?".
+  + Đánh vào các mã thuộc "Top Industry" sẽ mang lại xác suất thắng cao hơn nhiều so với việc bắt đáy các ngành đang nằm ở "Bottom Industry".
+
+3. Bảng "Screening Hôm Nay" (Data Table)
+- Hiển thị gì: Danh sách chi tiết các mã cổ phiếu thỏa mãn tiêu chí lọc, kèm theo AI Score, Tín hiệu, RSI, MACD và Dòng tiền Khối ngoại/Tự doanh (tính bằng tỷ VNĐ).
+- Đọc hiểu:
+  + Là công cụ để lọc mã. NĐT có thể kết hợp việc AI chấm điểm "MUA MẠNH" cùng với việc kiểm tra xem Khối ngoại hoặc Tự doanh có đang gom hàng mã đó không (fr_buy_value > fr_sell_value).
+  + RSI / MACD được hiển thị kế bên giúp NĐT dân phân tích kỹ thuật (TA) có thể xác nhận lại (Cross-check) tín hiệu của AI có đang đồng pha với các chỉ báo truyền thống không.
+
+4. Biểu đồ Nến Nhật "Price + trend lines" (TradingView Chart)
+- Hiển thị gì: Biểu đồ nến thực tế (Candlestick) kèm thanh khoản (Volume) và 2 đường trung bình động (SMA 20 màu xanh, SMA 50 màu cam).
+- Đọc hiểu:
+  + Nến Xanh (giá đóng cửa > mở cửa) / Nến Đỏ (giá đóng cửa < mở cửa).
+  + NĐT dùng biểu đồ này để xác định XU HƯỚNG hiện tại của cổ phiếu. Nếu nến nằm trên cả 2 đường SMA20 và SMA50 thì cổ phiếu đang trong xu hướng tăng mạnh.
+  + Kết hợp với tín hiệu MUA của AI, nếu điểm MUA xuất hiện khi giá vừa vượt lên trên đường SMA20 với Volume lớn (Cột volume xanh cao), đó là một điểm mua cực kỳ lý tưởng.
+
+5. Biểu đồ "AI Score History" (Area Chart)
+- Hiển thị gì: Lịch sử biến động điểm số AI (từ 0 đến 1) của mã cổ phiếu trong thời gian qua.
+- Đọc hiểu:
+  + Biểu đồ này cực kỳ quan trọng để đánh giá "Động lượng" (Momentum) của AI.
+  + Nếu AI Score đang hướng từ dưới lên (ví dụ: 0.3 -> 0.45 -> 0.6): Thể hiện mã cổ phiếu này đang tích lũy tốt và ngày càng có dấu hiệu chuẩn bị bật tăng. NĐT có thể mua thăm dò.
+  + Nếu đường này đang cắm đầu từ trên xuống: Động lực tăng đã hết, dấu hiệu rủi ro cao.
+
+6. Biểu đồ "Money Flow 30d" (Dòng tiền thông minh)
+- Hiển thị gì: Giá trị mua ròng / bán ròng của Khối Ngoại (Foreign) và Tự Doanh (Prop) trong 30 ngày gần nhất. Cột mọc lên trên (số dương) là Mua ròng, cắm xuống dưới (số âm) là Bán ròng.
+- Đọc hiểu:
+  + "Dấu chân người khổng lồ". Nếu AI báo MUA và biểu đồ Money Flow cũng cho thấy Khối Ngoại/Tự doanh liên tục có các cột dương mọc lên, NĐT có thể hoàn toàn tự tin đi lệnh lớn vì có dòng tiền tổ chức bảo kê.
+
+7. Biểu đồ "Daily Win-rate History"
+- Hiển thị gì: Đường màu xanh dương thể hiện tỷ lệ Tỉ lệ dự đoán đúng của mô hình (Win-rate %) theo từng ngày. Đường màu xanh lá thể hiện Tổng số lượng mã được dự báo trong ngày đó.
+- Đọc hiểu:
+  + Giúp NĐT tin tưởng vào hệ thống. Nếu Win-rate liên tục duy trì trên mức 60-65%, NĐT biết rằng thuật toán đang "đọc" thị trường rất chuẩn xác.
+  + Trong các giai đoạn thị trường nhiễu loạn (Sideway/Biến động mạnh), Win-rate có thể tụt giảm. Lúc này biểu đồ sẽ gián tiếp cảnh báo NĐT nên giảm tỷ trọng giao dịch, không mù quáng tin vào AI 100% khi mô hình đang ở chu kỳ dự báo kém hiệu quả.
+
+================================================================================
+KẾT LUẬN:
+Sự kết hợp giữa AI Score (Xác suất) + Technical Analysis (Biểu đồ nến/RSI) + Dấu chân dòng tiền (Money Flow) giúp NĐT xây dựng một bộ lọc đầu tư 3 lớp cực kỳ chặt chẽ, giảm thiểu tối đa rủi ro cảm xúc và nâng cao hiệu suất sinh lời trên thị trường Chứng khoán Việt Nam.
+================================================================================
