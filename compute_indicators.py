@@ -95,6 +95,22 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     is_morning_star     SMALLINT,
     is_evening_star     SMALLINT,
 
+    -- Normalized Features
+    price_vs_sma20      FLOAT,
+    price_vs_sma50      FLOAT,
+    sma20_vs_sma50      FLOAT,
+    price_momentum_5    FLOAT,
+    price_momentum_10   FLOAT,
+    price_momentum_20   FLOAT,
+    volume_momentum_5   FLOAT,
+    macd_norm           FLOAT,
+    macd_hist_norm      FLOAT,
+    atr_pct             FLOAT,
+    bb_width_norm       FLOAT,
+    candle_body_pct     FLOAT,
+    candle_upper_pct    FLOAT,
+    candle_lower_pct    FLOAT,
+
     -- Target labels (ML)
     direction_5d    SMALLINT,   -- 1 tăng / 0 giảm sau 5 phiên
     direction_10d   SMALLINT,
@@ -113,6 +129,22 @@ def create_table():
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS stoch_k FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS stoch_d FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS williams_r FLOAT"))
+        
+        # Thêm 14 normalized features mới
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma20 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma50 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS sma20_vs_sma50 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_momentum_5 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_momentum_10 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_momentum_20 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS volume_momentum_5 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS macd_norm FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS macd_hist_norm FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS atr_pct FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS bb_width_norm FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_body_pct FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_upper_pct FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_lower_pct FLOAT"))
     print("✅ Bảng technical_indicators đã sẵn sàng.")
 
 
@@ -288,6 +320,58 @@ def compute_candles(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def compute_normalized_features(df: pd.DataFrame) -> pd.DataFrame:
+    close = df["close"]
+    open_p = df["open"]
+    volume = df["volume"]
+    sma_20 = df["sma_20"]
+    sma_50 = df["sma_50"]
+    macd = df["macd"]
+    macd_hist = df["macd_hist"]
+    atr_14 = df["atr_14"]
+    bb_width = df["bb_width"]
+    candle_body_size = df["candle_body_size"]
+    candle_upper_wick = df["candle_upper_wick"]
+    candle_lower_wick = df["candle_lower_wick"]
+
+    # Normalized MA (% so với giá)
+    df["price_vs_sma20"] = (close - sma_20) / (sma_20 + 1e-6)
+    df["price_vs_sma50"] = (close - sma_50) / (sma_50 + 1e-6)
+    df["sma20_vs_sma50"] = (sma_20 - sma_50) / (sma_50 + 1e-6)
+
+    # Price momentum
+    df["price_momentum_5"]  = close.pct_change(5)
+    df["price_momentum_10"] = close.pct_change(10)
+    df["price_momentum_20"] = close.pct_change(20)
+
+    # Volume momentum
+    df["volume_momentum_5"] = volume.pct_change(5)
+
+    # Normalized indicators
+    df["macd_norm"]      = macd / (close + 1e-6)
+    df["macd_hist_norm"] = macd_hist / (close + 1e-6)
+    df["atr_pct"]        = atr_14 / (close + 1e-6)
+    df["bb_width_norm"]  = bb_width / (sma_20 + 1e-6)
+
+    # Normalized candlestick
+    df["candle_body_pct"]  = candle_body_size / (open_p + 1e-6)
+    df["candle_upper_pct"] = candle_upper_wick / (open_p + 1e-6)
+    df["candle_lower_pct"] = candle_lower_wick / (open_p + 1e-6)
+
+    # Clip tất cả về [-0.5, 0.5]
+    cols_to_clip = [
+        "price_vs_sma20", "price_vs_sma50", "sma20_vs_sma50",
+        "price_momentum_5", "price_momentum_10", "price_momentum_20",
+        "volume_momentum_5", "macd_norm", "macd_hist_norm",
+        "atr_pct", "bb_width_norm", "candle_body_pct",
+        "candle_upper_pct", "candle_lower_pct"
+    ]
+    for col in cols_to_clip:
+        df[col] = df[col].astype(float).clip(lower=-0.5, upper=0.5)
+
+    return df
+
+
 def compute_target(df: pd.DataFrame) -> pd.DataFrame:
     future_close_5  = df["close"].shift(-5)
     future_close_10 = df["close"].shift(-10)
@@ -316,6 +400,10 @@ INDICATOR_COLS = [
     "candle_body_size", "candle_upper_wick", "candle_lower_wick",
     "is_doji", "is_hammer", "is_bull_engulfing", "is_bear_engulfing",
     "is_morning_star", "is_evening_star",
+    "price_vs_sma20", "price_vs_sma50", "sma20_vs_sma50",
+    "price_momentum_5", "price_momentum_10", "price_momentum_20",
+    "volume_momentum_5", "macd_norm", "macd_hist_norm", "atr_pct", "bb_width_norm",
+    "candle_body_pct", "candle_upper_pct", "candle_lower_pct",
     "direction_5d", "direction_10d", "return_5d",
 ]
 
@@ -383,6 +471,7 @@ def process_symbol(symbol: str, daily_mode: bool = False) -> int:
     df = compute_volatility(df)
     df = compute_volume(df)
     df = compute_candles(df)
+    df = compute_normalized_features(df)
     df = compute_target(df)
 
     # Trong daily mode chỉ upsert phần dữ liệu gần đây (tránh rewrite toàn bộ)
