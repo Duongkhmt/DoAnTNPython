@@ -1,60 +1,54 @@
-# explain_model.py
-import pickle, json
+# crawl_vnindex.py
 import pandas as pd
-import numpy as np
-from sqlalchemy import text
+from vnstock_data import Quote
 from timescale_utils import DatabaseManager
 
-model    = pickle.load(open("xgb_direction_5d.pkl", "rb"))
-features = json.load(open("features.json"))
-if isinstance(features, dict):
-    features = features["features"]
-
-db  = DatabaseManager()
+db  = DatabaseManager(database="vnstock_ts")
 eng = db.engine
 
-# Lấy data của PLX và MCH
-sql = text("""
-SELECT t.symbol, t.trading_date, t.rsi_14, t.macd, 
-       t.volume_ratio, t.bb_pct_b, t.adx_14,
-       t.stoch_k, t.williams_r, t.sma_10, t.sma_20, t.sma_50
-FROM technical_indicators t
-WHERE t.symbol IN ('PLX', 'MCH')
-  AND t.trading_date = (SELECT MAX(trading_date) FROM technical_indicators)
-""")
-df_show = pd.read_sql(sql, eng)
-print("Chỉ báo hiện tại:")
-print(df_show.to_string())
+print("Đang crawl VNINDEX...")
 
-# Lấy đủ features để predict
-sql2 = text("""
-SELECT t.*
-FROM technical_indicators t
-WHERE t.symbol IN ('PLX', 'MCH')
-  AND t.trading_date = (SELECT MAX(trading_date) FROM technical_indicators)
-""")
-df = pd.read_sql(sql2, eng)
-available = [f for f in features if f in df.columns]
-df_clean  = df.dropna(subset=available)
+for source in ["VCI", "VND"]:
+    try:
+        q  = Quote(symbol="VNINDEX", source=source)
+        df = q.history(
+            start="2020-01-01",
+            end="2026-05-12",
+            interval="1D"
+        )
+        print(f"Source {source}: {len(df)} rows")
+        print(df.tail(3))
 
-scores = model.predict_proba(df_clean[available])[:, 1]
-df_clean = df_clean.copy()
-df_clean['ai_score'] = scores
+        if len(df) > 0:
+            df_clean = df.copy()
 
-print("\nAI Score:")
-print(df_clean[['symbol', 'ai_score']].to_string())
+            # Đổi tên cột time → trading_date
+            if "time" in df_clean.columns:
+                df_clean = df_clean.rename(
+                    columns={"time": "trading_date"}
+                )
 
-# Feature importance — tại sao model cho điểm cao
-import xgboost as xgb
-fi = pd.DataFrame({
-    'feature': available,
-    'importance': model.feature_importances_
-}).sort_values('importance', ascending=False)
+            df_clean["symbol"] = "VNINDEX"
+            df_clean["trading_date"] = pd.to_datetime(
+                df_clean["trading_date"]
+            ).dt.date
 
-print("\nTop 10 feature model dựa vào nhiều nhất:")
-print(fi.head(10).to_string(index=False))
+            expected = [
+                "symbol", "trading_date",
+                "open", "high", "low", "close", "volume"
+            ]
+            for col in expected:
+                if col not in df_clean.columns:
+                    df_clean[col] = None
+            df_clean = df_clean[expected]
 
-# Giá trị của top features với PLX và MCH
-top_features = fi.head(10)['feature'].tolist()
-print("\nGiá trị top features của PLX và MCH:")
-print(df_clean[['symbol'] + top_features].to_string())
+            db.upsert_dataframe(
+                df_clean, "quote_history",
+                conflict_cols=["symbol", "trading_date"]
+            )
+            print(f"✅ Đã lưu {len(df_clean)} dòng VNINDEX vào DB!")
+            break
+
+    except Exception as e:
+        print(f"Source {source} lỗi: {e}")
+        continue

@@ -15,6 +15,7 @@ EXPORT_SQL = """
 WITH eligible_symbols AS (
     SELECT symbol
     FROM technical_indicators
+    WHERE symbol <> 'VNINDEX'
     GROUP BY symbol
     HAVING COUNT(*) >= :min_rows
 )
@@ -102,11 +103,47 @@ def get_engine():
 
 def export_dataset(output_path: Path, min_rows: int) -> pd.DataFrame:
     engine = get_engine()
+    
+    # Export dữ liệu chính (cổ phiếu)
     with engine.begin() as conn:
         df = pd.read_sql(text(EXPORT_SQL), conn, params={"min_rows": min_rows})
-    df.to_csv(output_path, index=False, encoding="utf-8-sig")
-    return df
-
+    
+    # Export thêm VNINDEX riêng, dùng đúng return_5d từ technical_indicators
+    vnindex_sql = text("""
+        SELECT 
+            q.symbol,
+            q.trading_date,
+            q.open,
+            q.high,
+            q.low,
+            q.close,
+            q.volume,
+            'INDEX' AS exchange,
+            NULL AS industry,
+            NULL AS sector,
+            t.return_5d
+        FROM quote_history q
+        JOIN technical_indicators t
+          ON t.symbol = q.symbol
+         AND t.trading_date = q.trading_date
+        WHERE q.symbol = 'VNINDEX'
+        ORDER BY q.trading_date
+    """)
+    
+    with engine.begin() as conn:
+        df_vnindex = pd.read_sql(vnindex_sql, conn)
+    
+    print(f"VNINDEX: {len(df_vnindex)} dòng")
+    
+    # Merge lại và đảm bảo không có duplicate theo (symbol, trading_date)
+    df_all = pd.concat([df, df_vnindex], ignore_index=True)
+    before = len(df_all)
+    df_all = df_all.drop_duplicates(subset=["symbol", "trading_date"], keep="last")
+    df_all = df_all.sort_values(['symbol', 'trading_date']).reset_index(drop=True)
+    print(f"Drop duplicate rows: {before:,} -> {len(df_all):,}")
+    
+    df_all.to_csv(output_path, index=False, encoding="utf-8-sig")
+    return df_all
 
 def print_report(df: pd.DataFrame) -> None:
     total_symbols = df["symbol"].nunique()

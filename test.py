@@ -53,7 +53,7 @@ if ARGS.daily:
     START_DATE = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     print(f"[*] CHE DO DONG BO HANG NGAY: {START_DATE} den nay")
 else:
-    START_DATE = "2024-01-01"
+    START_DATE = "2020-01-01"
     print(f"[*] CHE DO DONG BO LICH SU: {START_DATE} den nay")
 
 

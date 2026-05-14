@@ -1,6 +1,4 @@
 from typing import Any
-
-import numpy as np
 import pandas as pd
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
@@ -11,7 +9,7 @@ from daily_predict import run_daily_prediction
 from timescale_utils import DatabaseManager
 
 
-app = FastAPI(title="VN Stock AI Screening Service")
+app = FastAPI(title="VN Stock AI Ranking Service")
 
 
 _db_manager = None
@@ -36,7 +34,11 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _latest_predict_date() -> Any:
-    df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions")
+    df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions WHERE symbol != 'VNINDEX'")
+    if df.empty or pd.isna(df.loc[0, "predict_date"]):
+        # Fallback to absolute max if no other symbols found
+        df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions")
+        
     if df.empty or pd.isna(df.loc[0, "predict_date"]):
         raise HTTPException(status_code=404, detail="No AI predictions found.")
     return df.loc[0, "predict_date"]
@@ -46,10 +48,10 @@ def _signal_filter_clause(signal: str) -> tuple[str, dict[str, Any]]:
     normalized = (signal or "ALL").upper()
     if normalized == "ALL":
         return "1 = 1", {}
-    if normalized == "MUA":
-        return "p.ai_signal IN ('MUA', 'MUA_MANH')", {}
-    if normalized == "BAN":
-        return "p.ai_signal IN ('BAN', 'BAN_MANH')", {}
+    if normalized == "TOP":
+        return "p.ai_signal IN ('TOP', 'TOP_STRONG')", {}
+    if normalized == "WEAK":
+        return "p.ai_signal IN ('WEAK', 'WEAK_STRONG')", {}
     return "p.ai_signal = :signal", {"signal": normalized}
 
 
@@ -61,7 +63,7 @@ def on_startup() -> None:
 @app.post("/daily_predict_all")
 def trigger_daily_prediction(background_tasks: BackgroundTasks):
     background_tasks.add_task(run_daily_prediction)
-    return {"status": "accepted", "message": "Daily XGBoost prediction started in background."}
+    return {"status": "accepted", "message": "Daily LightGBM ranker prediction started in background."}
 
 
 @app.post("/predict_now")
@@ -99,9 +101,14 @@ def screening_today(
         p.predict_date,
         p.ai_score,
         p.ai_signal,
+        p.model_name,
+        p.model_version,
         t.rsi_14,
         t.macd,
         t.volume_ratio,
+        t.price_momentum_5,
+        t.price_momentum_20,
+        t.return_5d,
         ROUND(COALESCE(tr.fr_buy_value, 0)::numeric, 3) AS fr_buy_value,
         ROUND(COALESCE(tr.fr_sell_value, 0)::numeric, 3) AS fr_sell_value,
         ROUND(COALESCE(tr.prop_buy_value, 0)::numeric, 3) AS td_buy_value,
@@ -128,6 +135,7 @@ def screening_today(
     LEFT JOIN company l
       ON l.symbol = p.symbol
     WHERE p.predict_date = :predict_date
+      AND p.symbol != 'VNINDEX'
       AND {" AND ".join(filters)}
     ORDER BY p.ai_score DESC, p.symbol
     """
@@ -135,6 +143,7 @@ def screening_today(
     return {
         "predict_date": str(predict_date),
         "total": int(len(df)),
+        "signal_filter": signal.upper(),
         "items": df.to_dict(orient="records"),
     }
 
@@ -177,7 +186,7 @@ def stock_detail(symbol: str):
     LIMIT 1
     """
     ai_sql = """
-    SELECT predict_date, target_date, ai_score, ai_signal
+    SELECT predict_date, target_date, ai_score, ai_signal, model_name, model_version
     FROM ml_predictions
     WHERE symbol = :symbol
     ORDER BY predict_date DESC
@@ -241,36 +250,61 @@ def stock_detail(symbol: str):
 @app.get("/screening/history")
 def screening_history(days: int = Query(default=30, ge=1, le=365)):
     sql = """
+    WITH vnindex_returns AS (
+        SELECT trading_date, return_5d
+        FROM technical_indicators
+        WHERE symbol = 'VNINDEX'
+    )
     SELECT
         p.symbol,
         p.predict_date,
         p.target_date,
         p.ai_score,
         p.ai_signal,
-        t.direction_5d,
+        p.model_name,
+        p.model_version,
+        t.return_5d,
+        v.return_5d AS vnindex_return_5d,
+        (t.return_5d - v.return_5d) AS alpha_5d,
+        CASE WHEN p.ai_signal IN ('TOP', 'TOP_STRONG') THEN 1 ELSE 0 END AS is_top_signal,
         CASE
-            WHEN t.direction_5d IS NULL THEN NULL
-            WHEN (p.ai_score >= 0.5 AND t.direction_5d = 1) OR (p.ai_score < 0.5 AND t.direction_5d = 0)
-                THEN 1
+            WHEN t.return_5d IS NULL OR v.return_5d IS NULL THEN NULL
+            WHEN p.ai_signal IN ('TOP', 'TOP_STRONG') AND (t.return_5d - v.return_5d) > 0 THEN 1
+            WHEN p.ai_signal IN ('WEAK', 'WEAK_STRONG') AND (t.return_5d - v.return_5d) < 0 THEN 1
             ELSE 0
-        END AS is_correct
+        END AS is_correct_relative
     FROM ml_predictions p
     LEFT JOIN technical_indicators t
       ON t.symbol = p.symbol
      AND t.trading_date = p.predict_date
+    LEFT JOIN vnindex_returns v
+      ON v.trading_date = p.predict_date
     WHERE p.predict_date >= CURRENT_DATE - :days
+      AND p.symbol != 'VNINDEX'
     ORDER BY p.predict_date DESC, p.ai_score DESC
     """
     history = _read_sql(sql, {"days": days})
     if history.empty:
         return {"days": days, "items": [], "daily_win_rate": []}
 
+    # Convert 1/0 to True/False for better Jackson mapping
+    history["is_top_signal"] = history["is_top_signal"].astype(bool)
+    history["is_correct_relative"] = history["is_correct_relative"].astype(bool)
+
     stats = (
-        history.dropna(subset=["is_correct"])
+        history.dropna(subset=["alpha_5d", "is_correct_relative"])
         .groupby("predict_date", as_index=False)
-        .agg(total_predictions=("symbol", "count"), win_rate=("is_correct", "mean"))
+        .agg(
+            total_predictions=("symbol", "count"),
+            correct_predictions=("is_correct_relative", "sum"),
+            avg_alpha=("alpha_5d", "mean"),
+            top_signal_count=("is_top_signal", "sum"),
+            relative_win_rate=("is_correct_relative", "mean"),
+        )
     )
-    # Ép kiểu win_rate về dạng số thực (float) và làm tròn (không nhân 100 nữa)
+    stats["win_rate"] = stats["relative_win_rate"]
+    stats["avg_alpha"] = pd.to_numeric(stats["avg_alpha"], errors="coerce").round(6)
+    stats["relative_win_rate"] = pd.to_numeric(stats["relative_win_rate"], errors="coerce").round(4)
     stats["win_rate"] = pd.to_numeric(stats["win_rate"], errors="coerce").round(4)
     
     history = _clean_df(history)
@@ -288,26 +322,34 @@ def market_overview():
     predict_date = _latest_predict_date()
 
     market_sql = """
-    WITH ranked_quotes AS (
-        SELECT
-            symbol,
-            trading_date,
-            close,
-            LAG(close) OVER (PARTITION BY symbol ORDER BY trading_date) AS prev_close,
-            ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY trading_date DESC) AS rn
-        FROM quote_history
+    WITH latest_date AS (
+        SELECT MAX(trading_date) FROM quote_history
+    ),
+    prev_date AS (
+        SELECT MAX(trading_date) FROM quote_history WHERE trading_date < (SELECT * FROM latest_date)
+    ),
+    current_prices AS (
+        SELECT symbol, close FROM quote_history WHERE trading_date = (SELECT * FROM latest_date)
+    ),
+    previous_prices AS (
+        SELECT symbol, close FROM quote_history WHERE trading_date = (SELECT * FROM prev_date)
     )
     SELECT
-        COUNT(*) FILTER (WHERE close > prev_close) AS up_count,
-        COUNT(*) FILTER (WHERE close < prev_close) AS down_count,
-        COUNT(*) FILTER (WHERE close = prev_close) AS flat_count
-    FROM ranked_quotes
-    WHERE rn = 1
+        COUNT(*) FILTER (WHERE c.close > p.close) AS up_count,
+        COUNT(*) FILTER (WHERE c.close < p.close) AS down_count,
+        COUNT(*) FILTER (WHERE c.close = p.close) AS neutral_count,
+        COUNT(*) AS total_count
+    FROM current_prices c
+    JOIN previous_prices p ON c.symbol = p.symbol
     """
     signal_sql = """
-    SELECT ai_signal, COUNT(*) AS total
+    SELECT 
+        ai_signal, 
+        COUNT(*) AS total,
+        AVG(ai_score) AS avg_ai_score
     FROM ml_predictions
     WHERE predict_date = :predict_date
+      AND symbol != 'VNINDEX'
     GROUP BY ai_signal
     ORDER BY total DESC, ai_signal
     """
@@ -315,24 +357,39 @@ def market_overview():
     SELECT
         l.industry,
         AVG(p.ai_score) AS avg_ai_score,
-        COUNT(*) AS total_symbols
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE p.ai_signal IN ('TOP', 'TOP_STRONG')) AS top_count,
+        COUNT(*) FILTER (WHERE p.ai_signal IN ('WEAK', 'WEAK_STRONG')) AS weak_count
     FROM ml_predictions p
     LEFT JOIN company l
       ON l.symbol = p.symbol
     WHERE p.predict_date = :predict_date
+      AND p.symbol != 'VNINDEX'
       AND l.industry IS NOT NULL
     GROUP BY l.industry
     HAVING COUNT(*) >= 3
     ORDER BY avg_ai_score DESC
     """
 
-    market = _clean_df(_read_sql(market_sql))
+    market_df = _read_sql(market_sql)
     signal_distribution = _clean_df(_read_sql(signal_sql, {"predict_date": predict_date}))
     industries = _clean_df(_read_sql(industry_sql, {"predict_date": predict_date}))
 
+    market_breadth = {}
+    if not market_df.empty:
+        row = market_df.iloc[0]
+        total = float(row["total_count"]) if row["total_count"] > 0 else 1
+        market_breadth = {
+            "up_count": int(row["up_count"]),
+            "down_count": int(row["down_count"]),
+            "neutral_count": int(row["neutral_count"]),
+            "up_ratio": float(row["up_count"]) / total,
+            "down_ratio": float(row["down_count"]) / total
+        }
+
     return {
         "predict_date": str(predict_date),
-        "market_breadth": market.iloc[0].to_dict() if not market.empty else {},
+        "market_breadth": market_breadth,
         "signal_distribution": signal_distribution.to_dict(orient="records"),
         "top_industries": industries.head(10).to_dict(orient="records"),
         "bottom_industries": industries.sort_values("avg_ai_score", ascending=True).head(10).to_dict(orient="records"),
@@ -344,6 +401,7 @@ def latest_predictions(limit: int = 20):
     sql = """
     SELECT symbol, predict_date, target_date, ai_score, ai_signal, model_name, model_version, updated_at
     FROM ml_predictions
+    WHERE symbol != 'VNINDEX'
     ORDER BY predict_date DESC, ai_score DESC
     LIMIT :limit
     """
@@ -353,7 +411,7 @@ def latest_predictions(limit: int = 20):
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "service": "vn-stock-ai-screening"}
+    return {"status": "ok", "service": "vn-stock-ai-ranking"}
 
 
 if __name__ == "__main__":
