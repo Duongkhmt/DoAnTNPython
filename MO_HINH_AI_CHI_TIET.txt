@@ -1,0 +1,67 @@
+================================================================================
+BẢN GIẢI THÍCH CHI TIẾT VỀ MÔ HÌNH AI DỰ ĐOÁN CHỨNG KHOÁN (FINANCE AI)
+================================================================================
+
+Chào bạn, đây là tài liệu giải thích toàn bộ "bộ não" của hệ thống AI mà bạn đang vận hành. Tài liệu này được chia thành các phần để bạn hiểu rõ từ dữ liệu đầu vào đến cách nó đưa ra quyết định.
+
+1. TỔNG QUAN VỀ MÔ HÌNH (MODEL ARCHITECTURE)
+--------------------------------------------------------------------------------
+- Loại mô hình: LightGBM Ranker (Learning-to-Rank).
+- Tại sao chọn mô hình này? Trong chứng khoán, việc dự đoán giá chính xác là bất khả thi. Thay vào đó, mô hình này chọn cách "Xếp hạng". Nó so sánh hàng ngàn mã cổ phiếu với nhau để tìm ra những mã có "sức mạnh vượt trội" (Alpha) so với thị trường.
+- Mục tiêu dự đoán: Lợi nhuận kỳ vọng trong 5 phiên giao dịch tới (T+5).
+
+2. DỮ LIỆU ĐẦU VÀO (FEATURES / KỸ THUẬT)
+--------------------------------------------------------------------------------
+Mô hình "nhìn" vào hơn 50 thông số khác nhau của mỗi cổ phiếu mỗi ngày:
+
+A. Nhóm Động lượng & Xu hướng:
+   - SMA20, SMA50: Xác định cổ phiếu đang ở xu hướng tăng hay giảm dài hạn.
+   - RSI (Relative Strength Index): Đo lường lực mua/bán, xác định trạng thái quá mua hoặc quá bán.
+   - MACD & MACD Histogram: Tìm kiếm sự giao cắt và hội tụ của dòng tiền.
+   - ADX: Đo độ mạnh của xu hướng hiện tại.
+
+B. Nhóm Biến động & Dòng tiền:
+   - Bollinger Bands (%B & Width): Đo độ nén của giá, dự báo các cú bùng nổ.
+   - CMF (Chaikin Money Flow): Theo dõi dòng tiền của các "ông lớn" (Cá mập) đang vào hay ra.
+   - Volume Ratio: So sánh khối lượng giao dịch hôm nay với trung bình 20 phiên.
+
+C. Nhóm Mẫu hình nến (Candlestick Analysis):
+   - AI nhận diện các mẫu hình nến đảo chiều kinh điển: Doji, Hammer (Búa), Engulfing (Nhấn chìm), Morning Star (Sao mai)...
+
+D. Nhóm Bối cảnh Thị trường & Tương quan:
+   - VNINDEX Momentum: AI xem xét sức khỏe của thị trường chung. Nếu thị trường chung xấu, AI sẽ khắt khe hơn trong việc chọn mã.
+   - Relative Strength: So sánh trực tiếp biến động của mã cổ phiếu với VNINDEX. Những mã "Xanh khi thị trường Đỏ" sẽ được AI đánh giá rất cao.
+
+E. Nhóm Xếp hạng chéo (Cross-sectional Ranks):
+   - Đây là phần thông minh nhất. Thay vì chỉ nhìn chỉ số RSI của 1 mã, AI tính toán xem RSI của mã đó đứng thứ mấy trên toàn sàn HOSE/HNX. Điều này giúp loại bỏ yếu tố "nhiễu" do biến động toàn thị trường.
+
+3. QUÁ TRÌNH HỌC (TRAINING PROCESS)
+--------------------------------------------------------------------------------
+- Dữ liệu huấn luyện: Hệ thống đã học từ lịch sử giá của toàn bộ sàn chứng khoán Việt Nam trong nhiều năm.
+- Cách học (Gradient Boosting): Mô hình xây dựng hàng ngàn "cây quyết định" (Decision Trees). 
+  + Cây thứ nhất đưa ra dự đoán sơ bộ.
+  + Cây thứ hai học từ những sai sót của cây thứ nhất.
+  + Cây thứ n tiếp tục tinh chỉnh để đạt độ chính xác cao nhất trong việc xếp hạng.
+- Kết quả học: AI tự rút ra được các quy luật mà con người khó nhận thấy, ví dụ: "Sự kết hợp giữa RSI ở mức 65, Volume tăng 30% và VNINDEX đang tích lũy thường dẫn đến một cú tăng mạnh trong 5 ngày tới".
+
+4. KẾT QUẢ ĐẦU RA (OUTPUT & SIGNALS)
+--------------------------------------------------------------------------------
+Sau khi chạy dự đoán mỗi ngày (script daily_predict.py), AI sẽ đưa ra:
+
+- AI SCORE: Một điểm số đại diện cho sức mạnh tổng hợp. Điểm càng cao, xác suất thắng càng lớn.
+- AI SIGNAL (Tín hiệu):
+  + TOP_STRONG (Top 10%): Những mã mạnh nhất, tiềm năng dẫn dắt thị trường.
+  + TOP (10-30%): Những mã đang có đà tăng tốt, an toàn.
+  + NEUTRAL (30-70%): Nhóm trung lập, cần quan sát thêm.
+  + WEAK / WEAK_STRONG (Bottom 30%): Nhóm yếu, dòng tiền đang rút ra, rủi ro cao.
+
+5. TÓM TẮT LUỒNG VẬN HÀNH
+--------------------------------------------------------------------------------
+Bước 1: Quét dữ liệu thô (Giá, Khối lượng, Khối ngoại).
+Bước 2: Tính toán 50+ chỉ số kỹ thuật (Compute Indicators).
+Bước 3: Đưa vào mô hình AI để chấm điểm (Inference).
+Bước 4: Phân loại tín hiệu (TOP, NEUTRAL, WEAK).
+Bước 5: Hiển thị lên Dashboard để hỗ trợ nhà đầu tư ra quyết định.
+
+Hệ thống AI này đóng vai trò như một "trợ lý phân tích" làm việc không mệt mỏi, quét hàng ngàn mã cổ phiếu trong vài giây để lọc ra những cơ hội tốt nhất cho bạn.
+================================================================================

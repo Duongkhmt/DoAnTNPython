@@ -1,0 +1,113 @@
+================================================================================
+ĐẠI TỪ ĐIỂN KỸ THUẬT: HỆ THỐNG AI DỰ ĐOÁN CHỨNG KHOÁN (PHIÊN BẢN CUỐI CÙNG)
+================================================================================
+
+Tài liệu này là bản đặc tả kỹ thuật đầy đủ nhất, chi tiết đến từng biến số và dòng code 
+trong hệ thống AI của bạn. Đây là "nguồn sự thật duy nhất" (Single Source of Truth).
+
+--------------------------------------------------------------------------------
+PHẦN 1: CHI TIẾT TOÀN BỘ FEATURES (CÁC BIẾN SỐ ĐẦU VÀO)
+--------------------------------------------------------------------------------
+
+Hệ thống sử dụng các Features được tính toán từ file `compute_indicators.py`. Dưới đây là 
+định nghĩa kỹ thuật chính xác:
+
+1. Nhóm Trend (Xu hướng):
+   - sma_10, sma_20, sma_50: Trung bình động đơn giản (Rolling Mean).
+   - ema_12, ema_26: Trung bình động lũy thừa (Exponential Moving Average).
+   - macd: ema_12 - ema_26.
+   - macd_signal: EMA(macd, 9).
+   - macd_hist: macd - macd_signal.
+   - adx_14: Đo sức mạnh xu hướng qua độ lệch giữa +DI và -DI, chuẩn hóa qua ATR.
+   - rsi_14: 100 - (100 / (1 + AverageGain/AverageLoss)).
+
+2. Nhóm Volatility (Biến động):
+   - bb_upper/lower: sma_20 +/- (2 * độ lệch chuẩn 20 phiên).
+   - bb_pct_b: (close - lower) / (upper - lower). Đo vị thế giá trong dải băng.
+   - bb_width: (upper - lower) / mid. Đo độ nén của thị trường.
+   - atr_14: Trung bình của True Range (Khoảng dao động thực tế lớn nhất).
+
+3. Nhóm Volume & Cash Flow (Khối lượng & Dòng tiền):
+   - obv: Khối lượng tích lũy cộng dồn dựa trên hướng giá.
+   - cmf_20 (Chaikin Money Flow): 
+     Công thức: SUM( [((C-L)-(H-C))/(H-L)] * V ) / SUM(V) trong 20 phiên.
+     Ý nghĩa: Đây là chỉ số đo áp lực mua/bán tích lũy. Nếu > 0, tiền đang vào.
+   - volume_ratio: Khối lượng hiện tại / Trung bình khối lượng 20 phiên.
+
+4. Nhóm Features chuẩn hóa (Normalized Features - AI ĐỌC TRỰC TIẾP):
+   - price_vs_sma20: (close / sma20) - 1. (Giới hạn [-0.5, 0.5]).
+   - price_momentum_5/10/20: Tỷ lệ thay đổi giá (Percentage Change) sau 5, 10, 20 phiên.
+   - macd_norm: macd / close. (Chuẩn hóa để so sánh giữa các mã giá khác nhau).
+   - candle_body_pct: (close - open).abs() / open. (Độ lớn thân nến).
+   - candle_lower_pct: (min(open, close) - low) / open. (Độ dài râu nến dưới).
+
+--------------------------------------------------------------------------------
+PHẦN 2: CHI TIẾT CẤU TRÚC DATABASE & DỮ LIỆU (POSTGRESQL/TIMESCALE)
+--------------------------------------------------------------------------------
+
+Hệ thống được thiết kế trên TimescaleDB để xử lý hàng triệu dòng dữ liệu chuỗi thời gian:
+
+1. Bảng `quote_history`:
+   - Lưu trữ Open, High, Low, Close, Volume.
+   - Khóa chính: (symbol, trading_date).
+   - Tối ưu: Dùng Hypertable để phân vùng dữ liệu theo thời gian, giúp truy vấn nến lịch sử cực nhanh.
+
+2. Bảng `technical_indicators`:
+   - Chứa kết quả tính toán của 50+ chỉ số trên.
+   - Đây là "kho nguyên liệu" cho AI.
+   - Cấu trúc Index: `idx_ti_symbol` (B-Tree) giúp tìm nhanh lịch sử 1 mã, `idx_ti_date` giúp lấy dữ liệu toàn sàn để xếp hạng.
+
+3. Bảng `ml_predictions`:
+   - Lưu kết quả cuối cùng: ai_score, ai_signal, trend.
+   - Cột `target_date`: Ngày dự kiến (T+5) mà dự đoán sẽ ứng nghiệm.
+
+--------------------------------------------------------------------------------
+PHẦN 3: LÝ THUYẾT VÀ THAM SỐ MÔ HÌNH LIGHTGBM RANKER
+--------------------------------------------------------------------------------
+
+Mô hình được cấu hình với các tham số chiến lược (từ file .json):
+
+- objective: "lambdarank". Mục tiêu là tối ưu thứ tự ưu tiên của danh mục.
+- n_label_bins = 5: AI chia lợi nhuận tương lai thành 5 mức (từ cực xấu đến cực tốt) để học.
+- min_group_size = 150: Mỗi ngày giao dịch phải có ít nhất 150 mã cổ phiếu để AI thực hiện xếp hạng chéo. Điều này đảm bảo tính thống kê.
+- Cross-sectional Ranking Logic: 
+  Trong file `daily_predict.py`, hàm `assign_ranker_signals` thực hiện:
+  1. Lấy toàn bộ mã trên sàn trong ngày.
+  2. Tính `ai_score` từ model.
+  3. Tính `score_rank_pct` (Phần trăm xếp hạng): 
+     + Top 10% cao nhất -> TOP_STRONG.
+     + 10% - 30% -> TOP.
+     + 70% - 90% -> WEAK.
+     + Dưới 90% -> WEAK_STRONG.
+
+--------------------------------------------------------------------------------
+PHẦN 4: QUY TRÌNH VẬN HÀNH (PIPELINE) CHI TIẾT ĐẾN TỪNG GIÂY
+--------------------------------------------------------------------------------
+
+Mỗi ngày, hệ thống thực hiện chu kỳ khép kín:
+
+1. T + 0 (15:00 - 17:00): Dữ liệu giao dịch khớp lệnh cuối ngày được cập nhật.
+2. T + 1 (18:00): Airflow hoặc Task Scheduler kích hoạt `test.py --daily`.
+   - Script kết nối VNStock API.
+   - Tải dữ liệu Foreign (Khối ngoại), Proprietary (Tự doanh).
+   - Upsert (Cập nhật nếu có, chèn nếu mới) vào `quote_history`.
+3. T + 2 (18:05): Kích hoạt `compute_indicators.py --daily`.
+   - Lấy 90 ngày dữ liệu gần nhất của từng mã.
+   - Tính toán Rolling Window cho SMA, RSI...
+   - Ghi vào bảng `technical_indicators`.
+4. T + 3 (18:10): Kích hoạt `daily_predict.py`.
+   - Bước "Enrichment": Tính toán thêm các chỉ số so sánh với VNINDEX (Ví dụ: `rel_momentum_5 = stock_mom5 - vni_mom5`).
+   - Đưa vào Model LightGBM để lấy `ai_score`.
+   - Phân loại tín hiệu dựa trên Xếp hạng phần trăm (Ranking).
+5. T + 4 (18:15): Dashboard ReactJS gọi API, lấy dữ liệu từ `ml_predictions` để hiển thị biểu đồ và bảng xếp hạng cho bạn.
+
+--------------------------------------------------------------------------------
+KẾT LUẬN: SỰ KHÁC BIỆT CỐT LÕI
+--------------------------------------------------------------------------------
+Hệ thống này KHÔNG dự đoán ngày mai giá tăng hay giảm bao nhiêu đồng. Nó dự đoán 
+XÁC SUẤT CHIẾN THẮNG THỊ TRƯỜNG. 
+
+Một mã được AI báo "TOP_STRONG" nghĩa là: Dựa trên 50+ chỉ số kỹ thuật và dòng tiền, 
+cổ phiếu này đang hội tụ những đặc điểm giống hệt các mã đã từng tăng mạnh hơn VNIndex 
+trong quá khứ.
+================================================================================

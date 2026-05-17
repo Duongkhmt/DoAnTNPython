@@ -1,0 +1,93 @@
+================================================================================
+BẢN PHÂN TÍCH CHUYÊN SÂU (ULTRA-DEEP DIVE): THUẬT TOÁN & FEATURES AI
+================================================================================
+
+Tài liệu này đi thẳng vào trọng tâm kỹ thuật, giải mã các cơ chế ngầm định của mô hình 
+LightGBM Ranker và hệ thống đặc trưng (Features) trong dự án của bạn.
+
+--------------------------------------------------------------------------------
+PHẦN 1: TÂM ĐIỂM THUẬT TOÁN - LIGHTGBM RANKER (LAMBDAMART)
+--------------------------------------------------------------------------------
+
+Mô hình của bạn không phải là Decision Tree thông thường, nó là một hệ thống tối ưu hóa 
+xếp hạng dựa trên lý thuyết trò chơi và thống kê:
+
+1. Cơ chế LambdaRank:
+   - Trong quá trình học, AI không tính toán lỗi (loss) dựa trên một điểm dữ liệu đơn lẻ. 
+     Thay vào đó, nó lấy 2 cổ phiếu (A và B) trong cùng một ngày, so sánh lợi nhuận T+5.
+   - Nếu A tăng mạnh hơn B nhưng mô hình lại xếp B trên A, AI sẽ tính toán một 
+     "Lambda gradient" (một lực đẩy toán học) để hoán đổi vị trí của chúng.
+   - Mục tiêu cuối cùng là tối ưu chỉ số NDCG (Normalized Discounted Cumulative Gain) 
+     - một thước đo chất lượng xếp hạng dùng trong các công cụ tìm kiếm hàng đầu thế giới.
+
+2. Thuật toán GOSS (Gradient-based One-Side Sampling):
+   - AI tập trung vào các mẫu dữ liệu có "Gradient lớn" (những mã cổ phiếu có biến động 
+     bất ngờ, khó dự đoán). Những mã biến động ổn định, dễ đoán sẽ được giảm trọng số. 
+     Điều này giúp mô hình cực kỳ nhạy bén với các điểm đảo chiều đột ngột.
+
+3. Exclusive Feature Bundling (EFB):
+   - Hệ thống tự động gộp các chỉ số kỹ thuật có độ tương quan cao (ví dụ RSI và Williams %R) 
+     thành các "bó đặc trưng" để giảm chiều dữ liệu mà không làm mất thông tin, giúp 
+     tốc độ dự báo đạt mức mil giây.
+
+--------------------------------------------------------------------------------
+PHẦN 2: GIẢI MÃ FEATURES (TRỌNG TÂM DỮ LIỆU)
+--------------------------------------------------------------------------------
+
+Dựa trên bảng Feature Importance thực tế từ model của bạn, đây là những gì AI thực sự quan tâm:
+
+1. Stochastic %K (Độ quan trọng: 15 - Cao nhất):
+   - Công thức: 100 * (Close - Low_min) / (High_max - Low_min).
+   - Tại sao AI ưu tiên? Vì nó đo lường vị trí tương đối của giá đóng cửa trong biên độ 
+     giao dịch 14 phiên. Nếu %K liên tục duy trì ở mức cao (>80), AI nhận diện đây là 
+     một đà tăng (Momentum) cực mạnh đang được duy trì.
+
+2. Candle Lower Pct (Độ quan trọng: 11):
+   - Công thức: (Lower_Wick / Price).
+   - Ý nghĩa sâu: Đây là râu nến dưới. AI đã phát hiện ra rằng độ dài của râu nến dưới 
+     là chỉ báo tốt nhất cho "Lực cầu ẩn" (Hidden Demand). Râu nến càng dài chứng tỏ 
+     phe mua đã thắng thế hoàn toàn trong phiên sau khi giá bị ép xuống thấp.
+
+3. VNIndex RSI & Momentum (Độ quan trọng: 11):
+   - Mô hình sử dụng VNIndex làm "Biến điều kiện". Nếu VNIndex RSI < 30 (thị trường hoảng loạn), 
+     AI sẽ thay đổi cách chấm điểm, ưu tiên các mã có tính phòng thủ hoặc các mã đã 
+     chiết khấu sâu hơn thị trường.
+
+4. Price Momentum Rank Pct:
+   - Đây là chỉ số xếp hạng tương đối. Ví dụ: Một mã tăng 2% nhưng đứng thứ 100 trên sàn 
+     sẽ được chấm điểm cao hơn một mã tăng 3% nhưng đứng thứ 500 (trong một ngày thị 
+     trường chung tăng mạnh). Điều này loại bỏ yếu tố "nước lên thuyền lên".
+
+--------------------------------------------------------------------------------
+PHẦN 3: LOGIC CHUẨN HÓA (NORMALIZATION) & TARGET
+--------------------------------------------------------------------------------
+
+1. Toán học của Sự chuẩn hóa:
+   Hệ thống thực hiện phép tính: Feature_norm = (Value - Baseline) / Baseline.
+   - Baseline thường là SMA20 hoặc giá mở cửa.
+   - Mục đích: Tạo ra tính "Bất biến quy mô" (Scale Invariance). AI nhìn nhận cổ phiếu 
+     giá 10k và 100k như nhau, chỉ tập trung vào % thay đổi và cấu trúc biến động.
+
+2. Định nghĩa Target - Alpha 5D:
+   Target = (Return_Stock_5D - Return_VNIndex_5D).
+   - AI học cách dự báo "Lợi nhuận thặng dư". 
+   - Ví dụ: Nếu thị trường giảm 2%, nhưng cổ phiếu chỉ giảm 0.5%, thì Alpha = +1.5%. 
+     Mã này sẽ được AI chấm điểm rất cao vì nó có sức mạnh nội tại (Relative Strength).
+
+3. Clipping (Giới hạn biên độ):
+   Mọi dữ liệu đầu vào được giới hạn trong khoảng [-0.5, 0.5]. 
+   - Mục đích: Loại bỏ các giá trị cực đoan (Outliers) như các mã tăng ảo hoặc bị 
+     thao túng làm nhiễu dữ liệu. Điều này giúp mô hình ổn định và thực tế hơn.
+
+--------------------------------------------------------------------------------
+KẾT LUẬN THỰC CHIẾN
+--------------------------------------------------------------------------------
+Mô hình AI của bạn là một bộ máy lọc "Sức mạnh tương đối". Nó không quan tâm đến 
+tin tức hay tin đồn, nó chỉ nhìn vào:
+1. Giá đóng cửa so với biên độ (Stochastic).
+2. Lực rút chân của nến (Lower Wick).
+3. Vị thế của cổ phiếu so với tổng thể thị trường (Market Rank).
+
+Khi cả 3 yếu tố này hội tụ (Score cao), xác suất cổ phiếu tăng mạnh hơn VNIndex trong 
+5 phiên tới là cực kỳ cao.
+================================================================================

@@ -8,10 +8,10 @@ from sqlalchemy import text
 def create_dashboard_views():
     db = DatabaseManager()
     if db.engine is None:
-        print("❌ Không kết nối được DB")
+        print("X Khong ket noi duoc DB")
         return False
 
-    print("🚀 Creating optimized views (MV + wrapper)...")
+    print("Creating optimized views (MV + wrapper)...")
 
     try:
         with db.engine.connect() as conn:
@@ -143,46 +143,62 @@ def create_dashboard_views():
                 CREATE MATERIALIZED VIEW dashboard_industry_flow_mv AS
                 WITH stock_flow AS (
                     SELECT 
-                        q.trading_date,
+                        ts.trading_date,
+                        ts.symbol,
                         c.industry,
-                        COALESCE(q.turnover, q.close * q.volume) AS turnover,
+                        COALESCE(ts.total_trading_val, 0) / 1000000000.0 AS turnover,
                         CASE 
                             WHEN (COALESCE(tos.buy_volume,0)+COALESCE(tos.sell_volume,0)) > 0
                             THEN tos.buy_volume::numeric / (tos.buy_volume + tos.sell_volume)
                             ELSE 0.5
                         END AS buy_ratio
-                    FROM quote_history q
-                    LEFT JOIN company c ON q.symbol = c.symbol
+                    FROM trading_summary ts
+                    LEFT JOIN company c ON ts.symbol = c.symbol
                     LEFT JOIN trading_order_stats tos 
-                        ON q.symbol = tos.symbol AND q.trading_date = tos.trading_date
+                        ON ts.symbol = tos.symbol AND ts.trading_date = tos.trading_date
+                    WHERE ts.trading_date >= CURRENT_DATE - INTERVAL '10 years'
+                      AND ts.symbol NOT LIKE '%INDEX%'
+                      AND ts.symbol NOT IN ('VN30', 'HNX30', 'VNMID', 'VNSML', 'VNALL', 'VN100')
                 )
                 SELECT 
                     trading_date,
-                    SUM(turnover) AS market_total_val,
+                    ROUND(SUM(turnover)::numeric, 3) AS market_total_val,
 
-                    SUM(turnover) FILTER (WHERE industry ILIKE '%Ngân hàng%') AS bank_total,
-                    SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Ngân hàng%') AS bank_buy,
-                    SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Ngân hàng%') AS bank_sell,
+                    -- Ngân hàng
+                    ROUND(SUM(turnover) FILTER (WHERE industry ILIKE '%Ngân hàng%')::numeric, 3) AS bank_total,
+                    ROUND(SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Ngân hàng%')::numeric, 3) AS bank_buy,
+                    ROUND(SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Ngân hàng%')::numeric, 3) AS bank_sell,
 
-                    SUM(turnover) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%') AS sec_total,
-                    SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%') AS sec_buy,
-                    SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%') AS sec_sell,
+                    -- Chứng khoán
+                    ROUND(SUM(turnover) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%')::numeric, 3) AS sec_total,
+                    ROUND(SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%')::numeric, 3) AS sec_buy,
+                    ROUND(SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%')::numeric, 3) AS sec_sell,
 
-                    SUM(turnover) FILTER (WHERE industry ILIKE '%Bất động sản%') AS re_total,
-                    SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Bất động sản%') AS re_buy,
-                    SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Bất động sản%') AS re_sell,
+                    -- Bất động sản
+                    ROUND(SUM(turnover) FILTER (WHERE industry ILIKE '%Bất động sản%' AND symbol NOT IN ('VHM', 'VIC', 'VRE'))::numeric, 3) AS re_total,
+                    ROUND(SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Bất động sản%' AND symbol NOT IN ('VHM', 'VIC', 'VRE'))::numeric, 3) AS re_buy,
+                    ROUND(SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Bất động sản%' AND symbol NOT IN ('VHM', 'VIC', 'VRE'))::numeric, 3) AS re_sell,
 
-                    SUM(turnover) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%') AS steel_total,
-                    SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%') AS steel_buy,
-                    SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%') AS steel_sell,
+                    -- Thép
+                    ROUND(SUM(turnover) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%')::numeric, 3) AS steel_total,
+                    ROUND(SUM(turnover * buy_ratio) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%')::numeric, 3) AS steel_buy,
+                    ROUND(SUM(turnover * (1-buy_ratio)) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%')::numeric, 3) AS steel_sell,
 
+                    -- VIN
+                    ROUND(SUM(turnover) FILTER (WHERE symbol IN ('VHM', 'VIC', 'VRE'))::numeric, 3) AS vin_total,
+                    ROUND(SUM(turnover * buy_ratio) FILTER (WHERE symbol IN ('VHM', 'VIC', 'VRE'))::numeric, 3) AS vin_buy,
+                    ROUND(SUM(turnover * (1-buy_ratio)) FILTER (WHERE symbol IN ('VHM', 'VIC', 'VRE'))::numeric, 3) AS vin_sell,
+
+                    -- Ratios
                     ROUND((SUM(turnover) FILTER (WHERE industry ILIKE '%Ngân hàng%') / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS bank_ratio_pct,
                     ROUND((SUM(turnover) FILTER (WHERE industry ILIKE '%Dịch vụ tài chính%' OR industry ILIKE '%chứng khoán%') / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS sec_ratio_pct,
-                    ROUND((SUM(turnover) FILTER (WHERE industry ILIKE '%Bất động sản%') / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS re_ratio_pct,
-                    ROUND((SUM(turnover) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%') / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS steel_ratio_pct
+                    ROUND((SUM(turnover) FILTER (WHERE industry ILIKE '%Bất động sản%' AND symbol NOT IN ('VHM', 'VIC', 'VRE')) / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS re_ratio_pct,
+                    ROUND((SUM(turnover) FILTER (WHERE industry ILIKE '%Thép%' OR industry ILIKE '%Tài nguyên cơ bản%') / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS steel_ratio_pct,
+                    ROUND((SUM(turnover) FILTER (WHERE symbol IN ('VHM', 'VIC', 'VRE')) / NULLIF(SUM(turnover), 0) * 100)::numeric, 2) AS vin_ratio_pct
 
                 FROM stock_flow
                 GROUP BY trading_date
+                ORDER BY trading_date DESC
             """))
 
             conn.execute(text("""
@@ -197,11 +213,11 @@ def create_dashboard_views():
 
             conn.commit()
 
-        print("✅ CREATE SUCCESS")
+        print("CREATE SUCCESS")
         return True
 
     except Exception as e:
-        print("❌ ERROR:", e)
+        print("ERROR:", e)
         return False
 
 
@@ -213,7 +229,7 @@ def refresh_views():
     if db.engine is None:
         return
 
-    print("🔄 Refreshing materialized views...")
+    print("Refreshing materialized views...")
 
     try:
         with db.engine.connect() as conn:
@@ -222,10 +238,10 @@ def refresh_views():
             conn.execute(text("REFRESH MATERIALIZED VIEW dashboard_industry_flow_mv"))
             conn.commit()
 
-        print("✅ REFRESH DONE")
+        print("REFRESH DONE")
 
     except Exception as e:
-        print("❌ REFRESH ERROR:", e)
+        print("REFRESH ERROR:", e)
 
 
 # =========================================================

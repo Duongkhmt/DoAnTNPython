@@ -1,0 +1,143 @@
+BÁO CÁO CHI TIẾT ĐỒ ÁN TỐT NGHIỆP
+CHƯƠNG 1: KHẢO SÁT, YÊU CẦU VÀ CƠ SỞ LÝ THUYẾT
+HỆ THỐNG PHÂN TÍCH VÀ DỰ BÁO TÀI CHÍNH THÔNG MINH (FINANCE AI DASHBOARD)
+
+1.2. Khảo sát hiện trạng và thu thập yêu cầu
+
+a. Mô tả bài toán hiện tại (Chi tiết):
+Thị trường chứng khoán Việt Nam hiện nay đang bùng nổ về mặt dữ liệu nhưng lại thiếu hụt các công cụ phân tích thông minh cho nhà đầu tư cá nhân. Các bảng giá hiện tại (VNDirect, SSI, TCBS...) chủ yếu chỉ hiển thị dữ liệu thô (OHLCV) mà chưa giải quyết được các vấn đề cốt lõi:
+- Sự nhiễu loạn thông tin: Nhà đầu tư bị quá tải bởi hàng nghìn mã cổ phiếu, dẫn đến hiện tượng "liệt phân tích".
+- Thiếu tính dự báo: Các công cụ hiện có chỉ cho biết "chuyện đã rồi", không đưa ra được xác suất tăng trưởng trong ngắn hạn (T+5, T+10).
+- Dòng tiền ẩn: Các giao dịch của khối ngoại, tự doanh và các tổ chức lớn (Smart Money) thường bị chia nhỏ, rất khó để nhà đầu tư cá nhân theo dõi sự dịch chuyển dòng tiền giữa các nhóm ngành.
+- Tính kỷ luật: Nhà đầu tư thường mua bán theo cảm xúc thay vì dựa trên các mô hình toán học và tín hiệu kỹ thuật đã được kiểm chứng (Backtest).
+
+b. Các yêu cầu chức năng (Functional Requirements) - Chi tiết từng Module:
+
+Hệ thống được chia thành 5 phân hệ chính với các chức năng cụ thể như sau:
+
+Module 1: Hệ thống Dự báo và Xếp hạng AI (AI Ranking Engine)
+- Chấm điểm Alpha 5D: Tự động tính toán và xếp hạng cổ phiếu dựa trên khả năng sinh lời thặng dư so với VNIndex trong 5 phiên tới.
+- Phân loại tín hiệu (Signal Classification): Hệ thống tự động gán nhãn cho từng mã: "Strong Buy", "Buy", "Hold", "Reduce" hoặc "Sell" dựa trên ngưỡng điểm AI Score.
+- Bộ lọc thông minh (AI Filtering): Cho phép lọc cổ phiếu theo nhiều tiêu chí kết hợp:
+    + Lọc theo nhóm ngành (Ngân hàng, Bất động sản, Thép...).
+    + Lọc theo mức vốn hóa (Large Cap, Mid Cap, Penny).
+    + Lọc theo ngưỡng điểm AI Score và khối lượng giao dịch đột biến (Volume Ratio).
+- Theo dõi lịch sử dự báo (AI History): Lưu trữ và hiển thị hiệu quả dự báo của mô hình trong quá khứ để người dùng kiểm chứng độ chính xác.
+
+Module 2: Phân tích Dòng tiền thị trường (Market Flow Analysis)
+- Theo dõi Khối ngoại (Foreign Flow): Thống kê chi tiết giá trị mua/bán ròng của nhà đầu tư nước ngoài theo thời gian thực và theo biểu đồ lịch sử 20-50 phiên.
+- Theo dõi Tự doanh (Proprietary Flow): Cập nhật dữ liệu giao dịch của các công ty chứng khoán để nhận diện xu hướng của các "nhà tạo lập".
+- Bản đồ dòng tiền ngành (Industry Cash Flow): 
+    + Hiển thị biểu đồ cột hoặc Heatmap về sự dịch chuyển tiền tệ giữa các ngành.
+    + Xác định các nhóm ngành đang "hút tiền" hoặc bị "rút tiền" mạnh nhất.
+- Market Breadth (Độ rộng thị trường): Thống kê số lượng mã tăng/giảm/không đổi để đánh giá sức mạnh tổng thể của thị trường chung.
+
+Module 3: Công cụ Phân tích Kỹ thuật Nâng cao (Technical Analysis Suite)
+- Biểu đồ Wyckoff (Wyckoff Phase Detection): Tự động hoặc hỗ trợ nhận diện các giai đoạn của thị trường/cổ phiếu theo lý thuyết Wyckoff (Tích lũy, Đẩy giá, Phân phối, Đè giá).
+- Tích hợp biểu đồ Interactive: Sử dụng thư viện TradingView để cung cấp đầy đủ các công cụ vẽ, chỉ báo kỹ thuật tùy biến.
+- Hệ thống chỉ báo định lượng: Tính toán tự động các chỉ số phức tạp:
+    + Momentum: RSI, Williams %R, Rate of Change (ROC).
+    + Trend: MACD, ADX, SMA/EMA (10, 20, 50, 200).
+    + Volatility: Bollinger Bands, ATR.
+    + Volume: Volume Ratio, Money Flow Index (MFI).
+
+Module 4: Chi tiết và Định giá cổ phiếu (Stock Deep-dive)
+- Hồ sơ doanh nghiệp: Hiển thị các chỉ số cơ bản quan trọng (P/E, P/B, ROE, EPS).
+- Biểu đồ định giá (Valuation Chart): So sánh mức định giá hiện tại với trung bình lịch sử để xác định vùng giá đắt/rẻ.
+- Nhật ký giao dịch: Thống kê các lệnh mua bán lớn trong phiên (Big Trades) của mã cổ phiếu đó.
+
+Module 5: Hệ thống người dùng và Quản lý dữ liệu
+- Đăng nhập và xác thực: Cho phép người dùng đăng ký tài khoản mới, đăng nhập, đăng xuất và đảm bảo tính bảo mật khi truy cập vào hệ thống bằng các cơ chế xác thực hiện đại (như JWT).
+- Quản lý thông tin cá nhân: Người dùng có thể xem và cập nhật các thông tin cá nhân cơ bản như Email, Số điện thoại và Địa chỉ để có thể cá nhân hóa trải nghiệm sử dụng hệ thống.
+- Quy trình ETL (Extract - Transform - Load): 
+    + Trích xuất & Lưu trữ thô: Tự động cào dữ liệu từ các nguồn tài chính và lưu trữ toàn bộ vào MongoDB dưới dạng dữ liệu thô để đảm bảo tính toàn vẹn và linh hoạt.
+    + Chuyển đổi & Làm sạch: Hệ thống thực hiện chuẩn hóa dữ liệu từ MongoDB, tính toán hàng trăm chỉ số kỹ thuật (Indicators) và đặc trưng (Features) cho mô hình AI.
+    + Lưu trữ tối ưu: Dữ liệu sau khi xử lý được đẩy vào PostgreSQL/TimescaleDB để phục vụ truy vấn tốc độ cao trên giao diện người dùng.
+
+
+c. Các yêu cầu phi chức năng (Non-functional Requirements):
+- Độ tin cậy (Reliability): Hệ thống phải đảm bảo dữ liệu khớp với bảng giá sàn HOSE/HNX.
+- Hiệu năng (Performance): 
+    + Khả năng xử lý đồng thời (Concurrency) tốt nhờ kiến trúc Non-blocking của Spring Boot và FastAPI.
+    + Truy vấn dữ liệu lịch sử cực nhanh với TimescaleDB (sử dụng tính năng Hypertable).
+- Tính trực quan (Usability): Giao diện tối giản (Minimalist), hỗ trợ Dark Mode, tập trung vào các con số và biểu đồ quan trọng nhất cho việc ra quyết định.
+- Khả năng bảo trì: Mã nguồn được module hóa rõ ràng, dễ dàng thay thế mô hình AI mà không cần viết lại Frontend.
+
+1.3. Các lý thuyết nền tảng
+
+1.3.1. Lý thuyết về thị trường chứng khoán
+Thị trường chứng khoán là một thị trường tài chính nơi các chứng khoán được mua bán, đóng vai trò là kênh huy động vốn quan trọng. Các khái niệm cốt lõi bao gồm:
+- Cổ phiếu (Stock): Chứng nhận quyền sở hữu một phần vốn của doanh nghiệp.
+- Giá trị OHLC (Open, High, Low, Close): Bốn mức giá cơ bản phản ánh tâm lý giao dịch trong một phiên. Trong đó, Close (Giá đóng cửa) là mức giá quan trọng nhất để tính toán các chỉ số.
+- Khối lượng giao dịch (Volume): Phản ánh sức mạnh và sự quan tâm của dòng tiền đối với cổ phiếu.
+
+1.3.2. Phân tích kỹ thuật (Technical Analysis)
+Phương pháp dự báo biến động giá dựa trên dữ liệu quá khứ, dựa trên ba tiên đề: "Thị trường phản ánh tất cả", "Giá biến động theo xu hướng" và "Lịch sử có tính lặp lại".
+- Lý thuyết Dow: Nền tảng phân tích xu hướng (Chính, Phụ, Nhỏ).
+- Biểu đồ nến Nhật: Công cụ hiển thị trực quan OHLC, giúp nhận diện lực mua/bán thông qua Thân nến và Râu nến (Wick).
+- Các chỉ báo kỹ thuật (Technical Indicators):
+    + Đường trung bình động (MA/SMA/EMA): Làm mượt giá để xác định xu hướng.
+    + RSI (Relative Strength Index): Đo lường động lượng, nhận diện vùng Quá mua (>70) và Quá bán (<30).
+    + MACD: Thể hiện mối quan hệ giữa các đường EMA để đưa ra tín hiệu giao cắt (Bullish/Bearish).
+    + Dải Bollinger (Bollinger Bands): Đo lường độ biến động của thị trường thông qua độ lệch chuẩn.
+
+1.3.3. Lý thuyết Wyckoff và Hành vi dòng tiền lớn
+Richard Wyckoff (1873–1934) là huyền thoại giao dịch Phố Wall, người tiên phong trong việc phân tích hành vi của "Smart Money" (Dòng tiền thông minh). Phương pháp của ông tập trung vào việc đi theo dấu chân của các nhà đầu tư tổ chức thông qua mối quan hệ Giá và Khối lượng.
+
+a. Ba Quy luật Cơ bản:
+- Quy luật Cung – Cầu: Mối quan hệ cốt lõi quyết định xu hướng giá. Khi Cầu > Cung giá tăng, Cung > Cầu giá giảm. Hệ thống phân tích Volume và Price Action để xác định lực lượng chiếm ưu thế.
+- Quy luật Nguyên nhân – Kết quả: Mọi biến động giá lớn đều cần một giai đoạn chuẩn bị (Nguyên nhân). Giai đoạn Tích lũy là nguyên nhân cho xu hướng tăng, và Phân phối là nguyên nhân cho xu hướng giảm.
+- Quy luật Nỗ lực – Kết quả: Khối lượng giao dịch (Volume) thể hiện Nỗ lực, sự thay đổi giá là Kết quả. Sự bất cân xứng (ví dụ: Volume lớn nhưng giá không tăng) là dấu hiệu cảnh báo đảo chiều sớm.
+
+b. Bốn Giai đoạn của Chu kỳ Thị trường:
+- Giai đoạn 1 - Tích lũy (Accumulation): Sau một đợt giảm dài, Smart Money âm thầm thu gom cổ phiếu. Giá đi ngang trong biên độ hẹp với Volume cạn kiệt ở các vùng đáy.
+- Giai đoạn 2 - Đẩy giá (Markup): Giá phá vỡ vùng tích lũy (Breakout) với Volume lớn, tạo cấu trúc đỉnh sau cao hơn đỉnh trước. Đây là giai đoạn sinh lời mạnh nhất.
+- Giai đoạn 3 - Phân phối (Distribution): Sau đợt tăng mạnh, Smart Money bắt đầu thoát hàng. Giá dao động mạnh ở vùng đỉnh với Volume cao nhưng không thể bứt phá thêm.
+- Giai đoạn 4 - Đè giá (Markdown): Giá phá vỡ hỗ trợ vùng phân phối, bước vào xu hướng giảm mạnh. Nhà đầu tư cá nhân hoảng loạn bán tháo.
+
+c. Ứng dụng Wyckoff trong Hệ thống AI:
+Hệ thống sử dụng các thuật toán nhận diện mẫu hình để tự động phát hiện các sự kiện quan trọng trong cấu trúc Wyckoff như: Spring (Rũ bỏ), Test (Kiểm tra cung), SOS (Dấu hiệu mạnh) và SOW (Dấu hiệu yếu). Các tín hiệu này được mã hóa thành các Feature Vector để đưa vào mô hình LightGBM, giúp AI hiểu được "ngữ cảnh" của thị trường đang ở giai đoạn nào để đưa ra dự báo Alpha 5D chính xác hơn thay vì chỉ nhìn vào các con số kỹ thuật đơn thuần.
+
+1.3.4. Trí tuệ nhân tạo và Machine Learning trong Tài chính
+Các chỉ báo và dữ liệu giá không được dùng độc lập mà được biến đổi thành "feature vector" để mô hình AI học các pattern phi tuyến tính.
+
+
+- Machine Learning (LightGBM Ranker): Sử dụng thuật toán Gradient Boosting tối ưu hóa cho bài toán xếp hạng (Ranking). Áp dụng các kỹ thuật:
+    + GOSS (Gradient-based One-Side Sampling): Tập trung vào dữ liệu có lỗi lớn.
+    + EFB (Exclusive Feature Bundling): Gộp các đặc trưng rời rạc để tăng tốc độ huấn luyện.
+- Định lượng tài chính: Áp dụng các công thức tính Alpha (Extra Return), Relative Strength Index để tìm kiếm cổ phiếu mạnh hơn thị trường chung.
+
+1.4. Các công nghệ, công cụ sử dụng
+
+1.4.1. Công nghệ Frontend (Giao diện người dùng)
+
+- ReactJS: Là một thư viện JavaScript mã nguồn mở do Meta (Facebook) phát triển, được sử dụng để xây dựng giao diện người dùng (User Interface - UI). ReactJS nổi bật với kiến trúc dựa trên thành phần (component-based architecture), cho phép chia giao diện thành các khối độc lập, có thể tái sử dụng, giúp việc phát triển và bảo trì ứng dụng trở nên dễ dàng và hiệu quả hơn. Nhờ cơ chế Virtual DOM, ReactJS tối ưu hóa việc cập nhật và render lại giao diện, mang lại trải nghiệm mượt mà. Đối với đề tài này, ReactJS đảm nhiệm vai trò xây dựng toàn bộ giao diện từ trang chủ, bảng xếp hạng AI, đến các trang phân tích chi tiết.
+- Axios: Là một thư viện HTTP client phổ biến dựa trên Promise. Axios cung cấp cú pháp đơn giản để gửi các loại request (GET, POST, PUT, DELETE) và xử lý phản hồi. Trong hệ thống này, Axios là cầu nối giữa giao diện ReactJS và các API do Backend cung cấp, giúp lấy dữ liệu cổ phiếu, chỉ báo kỹ thuật, kết quả dự báo AI một cách ổn định.
+- Recharts và TradingView Lightweight Charts: Đây là hai thư viện vẽ biểu đồ chuyên dụng được sử dụng trong dự án.
+    + Recharts: Xây dựng dựa trên các thành phần SVG của React, nổi bật với khả năng tùy biến cao, được sử dụng để vẽ các biểu đồ phân tích dòng tiền (Bar chart), định giá cổ phiếu (Line chart) và cấu trúc Wyckoff.
+    + TradingView Lightweight Charts: Thư viện hiển thị biểu đồ tài chính chuyên nghiệp, cực kỳ tối ưu về hiệu năng, được tích hợp để hiển thị biểu đồ nến Nhật (Candlestick) và dữ liệu khối lượng theo thời gian thực một cách mượt mà nhất.
+- Tailwind CSS: Framework CSS theo hướng "utility-first", cung cấp hàng ngàn class nhỏ, chuyên biệt để xây dựng giao diện nhanh chóng. Việc sử dụng Tailwind CSS kết hợp với các component React giúp giao diện nhất quán, linh hoạt tối đa, dễ dàng hỗ trợ các tính năng như Dark Mode và làm cho file CSS cuối cùng rất nhẹ (tối ưu hiệu năng).
+
+1.4.2. Công nghệ Backend (Nền tảng chính)
+
+1.4.2.1. Spring Boot (Java) - Backend Core:
+Spring Boot là framework phổ biến nhất trong hệ sinh thái Java, nổi tiếng với tính ổn định, bảo mật cao và khả năng mở rộng tốt.
+- Vai trò: Xây dựng các API RESTful phục vụ Front-end. Xử lý logic nghiệp vụ cốt lõi, xác thực và phân quyền người dùng thông qua Spring Security và JWT (JSON Web Token). Kết nối và tương tác với cơ sở dữ liệu PostgreSQL thông qua Spring Data JPA và Hibernate. Đóng vai trò "cầu nối" an toàn để giao tiếp với AI Service.
+
+1.4.2.2. Python Service (FastAPI) - AI & Data Processing Service:
+Python là ngôn ngữ thống trị trong lĩnh vực khoa học dữ liệu và học máy.
+- Vai trò: Xây dựng một web service độc lập chuyên xử lý các tác vụ nặng về dữ liệu. Dự án sử dụng FastAPI - một framework hiện đại, hỗ trợ bất đồng bộ (asynchronous) cho tốc độ xử lý cực cao và tự động tạo tài liệu API. Module này chịu trách nhiệm nhận yêu cầu, tải dữ liệu từ TimescaleDB, thực hiện tính toán hàng trăm chỉ báo và chạy mô hình LightGBM Ranker để trả về kết quả dự báo AI dạng JSON.
+
+1.4.3. Cơ sở dữ liệu (Đa nền tảng)
+- PostgreSQL (Core Database): Đóng vai trò là hệ quản trị cơ sở dữ liệu quan hệ cốt lõi của toàn bộ hệ thống. PostgreSQL được sử dụng để lưu trữ các dữ liệu có cấu trúc tĩnh và bán tĩnh như: thông tin người dùng (Users), phân quyền (Roles), thông tin hồ sơ doanh nghiệp (Company/Listing) và xử lý các nghiệp vụ chính của Backend Spring Boot.
+- TimescaleDB (PostgreSQL Extension): Đây không phải là một database độc lập mà là một phần mở rộng (extension) cài đặt trực tiếp trên nền PostgreSQL. Trong dự án, TimescaleDB được sử dụng chuyên biệt cho các bảng dữ liệu chuỗi thời gian (Time-series data) như lịch sử giá cổ phiếu, chỉ báo kỹ thuật và dòng tiền. Nhờ cơ chế phân mảnh tự động (Hypertable), TimescaleDB giúp hệ thống truy vấn hàng triệu bản ghi theo thời gian thực với tốc độ cực kỳ nhanh mà vẫn giữ nguyên được cú pháp SQL quen thuộc của PostgreSQL.
+- MongoDB: Lưu trữ các dữ liệu phi cấu trúc, dữ liệu thô từ quá trình cào tin tức (Web Scraping) và các tệp JSON phản hồi từ API bên thứ ba, giúp hệ thống linh hoạt trong việc mở rộng nguồn dữ liệu.
+
+1.4.4. Thư viện và Framework hỗ trợ khác
+- Pandas & Numpy: Xử lý ma trận dữ liệu lớn trong Python.
+- Scikit-learn & LightGBM: Xây dựng và triển khai mô hình học máy.
+- JDBC & JPA/Hibernate: Kết nối và quản trị dữ liệu trong Spring Boot.
+
+1.5. Kết luận chương
+
+Chương 1 đã phác thảo một bức tranh toàn diện về hệ thống Finance AI, từ việc xác định những "nỗi đau" (pain points) thực tế của nhà đầu tư đến việc thiết lập một danh sách các tính năng chi tiết, hiện đại. Việc kết hợp giữa các lý thuyết tài chính kinh điển (Wyckoff, Technical Analysis) với công nghệ AI tiên tiến và kiến trúc phần mềm mạnh mẽ (Spring Boot, FastAPI, TimescaleDB) hứa hẹn tạo ra một công cụ hỗ trợ quyết định đầu tư thực thụ, vượt xa các bảng giá thông thường về cả tính năng lẫn hiệu năng xử lý.

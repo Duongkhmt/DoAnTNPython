@@ -11,6 +11,7 @@ if docker_venv_path not in sys.path:
     sys.path.append(docker_venv_path)
 
 import pandas as pd
+from sqlalchemy import text
 from vnstock_data import Listing, Quote, Finance, Company, Trading
 
 from mongo_utils import MongoManager
@@ -50,7 +51,7 @@ def parse_args():
 ARGS = parse_args()
 
 if ARGS.daily:
-    START_DATE = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    START_DATE = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
     print(f"[*] CHE DO DONG BO HANG NGAY: {START_DATE} den nay")
 else:
     START_DATE = "2020-01-01"
@@ -408,18 +409,58 @@ def chunk_list(lst, size):
         yield lst[i:i + size]
 
 
-def get_done_symbols():
+def _load_symbol_set(sql, params=None):
     try:
-        sql = """
-        SELECT DISTINCT symbol
-        FROM quote_history
-        WHERE trading_date = CURRENT_DATE
-        """
-        df = pd.read_sql(sql, db.engine)
-        return set(df["symbol"].tolist())
+        df = pd.read_sql(text(sql), db.engine, params=params or {})
+        if "symbol" not in df.columns:
+            return set()
+        return set(df["symbol"].dropna().tolist())
     except Exception as exc:
-        print(f"Canh bao get_done_symbols: {exc}")
+        print(f"Canh bao load_symbol_set: {exc}")
         return set()
+
+
+def get_done_symbols(selected_stages):
+    if not selected_stages:
+        return set()
+
+    done_sets = []
+
+    if "quotes" in selected_stages:
+        done_sets.append(_load_symbol_set("""
+            SELECT DISTINCT symbol
+            FROM quote_history
+            WHERE trading_date = CURRENT_DATE
+        """))
+
+    if "trading" in selected_stages:
+        done_sets.append(_load_symbol_set("""
+            SELECT DISTINCT symbol
+            FROM trading_order_stats
+            WHERE trading_date = CURRENT_DATE
+        """))
+
+    if "company" in selected_stages:
+        done_sets.append(_load_symbol_set("""
+            SELECT DISTINCT symbol
+            FROM company
+            WHERE symbol IS NOT NULL
+        """))
+
+    if "finance" in selected_stages:
+        done_sets.append(_load_symbol_set("""
+            SELECT DISTINCT symbol
+            FROM finance
+            WHERE symbol IS NOT NULL
+        """))
+
+    if not done_sets:
+        return set()
+
+    result = done_sets[0]
+    for symbols in done_sets[1:]:
+        result = result.intersection(symbols)
+    return result
 
 
 def main():
@@ -437,14 +478,14 @@ def main():
         symbols = [s for s in symbols if s.upper() in requested_symbols]
         print(f"\nLoc theo --symbols, con {len(symbols)} ma: {symbols[:10]}")
 
-    done_symbols = get_done_symbols()
+    selected_stages = ARGS.stages or ["quotes", "company", "finance", "trading"]
+
+    done_symbols = get_done_symbols(selected_stages)
     if not ARGS.symbols:
         symbols = [s for s in symbols if s not in done_symbols]
 
     if ARGS.limit:
         symbols = symbols[: ARGS.limit]
-
-    selected_stages = ARGS.stages or ["quotes", "company", "finance", "trading"]
 
     print(f"\nTong ma: {len(symbols) + len(done_symbols)}")
     print(f"  Da co: {len(done_symbols)}")
