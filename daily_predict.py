@@ -70,9 +70,15 @@ def assign_ranker_signals(frame: pd.DataFrame) -> pd.DataFrame:
     return ranked
 
 
-def fetch_latest_indicator_frame(engine: Any) -> pd.DataFrame:
+def fetch_indicator_frame(engine: Any, target_date: str = None) -> pd.DataFrame:
+    date_filter = ""
+    params = {"min_universe_size": MIN_UNIVERSE_SIZE}
+    if target_date:
+        date_filter = "AND e.trading_date = :target_date"
+        params["target_date"] = target_date
+
     query = text(
-        """
+        f"""
         WITH eligible_dates AS (
             SELECT
                 t.trading_date,
@@ -84,7 +90,7 @@ def fetch_latest_indicator_frame(engine: Any) -> pd.DataFrame:
             GROUP BY t.trading_date
             HAVING COUNT(*) >= :min_universe_size
         ),
-        latest_date AS (
+        target_date_cte AS (
             SELECT MAX(e.trading_date) AS trading_date
             FROM eligible_dates e
             WHERE EXISTS (
@@ -93,6 +99,7 @@ def fetch_latest_indicator_frame(engine: Any) -> pd.DataFrame:
                 WHERE vi.symbol = 'VNINDEX'
                   AND vi.trading_date = e.trading_date
             )
+            {date_filter}
         )
         SELECT
             t.*,
@@ -103,7 +110,7 @@ def fetch_latest_indicator_frame(engine: Any) -> pd.DataFrame:
             vi.price_momentum_20 AS vnindex_momentum_20,
             vi.rsi_14 AS vnindex_rsi
         FROM technical_indicators t
-        JOIN latest_date d ON t.trading_date = d.trading_date
+        JOIN target_date_cte d ON t.trading_date = d.trading_date
         JOIN technical_indicators vi
           ON vi.symbol = 'VNINDEX'
          AND vi.trading_date = d.trading_date
@@ -116,7 +123,7 @@ def fetch_latest_indicator_frame(engine: Any) -> pd.DataFrame:
         """
     )
     with engine.begin() as conn:
-        df = pd.read_sql(query, conn, params={"min_universe_size": MIN_UNIVERSE_SIZE})
+        df = pd.read_sql(query, conn, params=params)
             
     return df
 
@@ -315,6 +322,7 @@ def run_daily_prediction(
     model_path: str = DEFAULT_MODEL_PATH,
     features_path: str = DEFAULT_FEATURES_PATH,
     model_version: str = DEFAULT_MODEL_VERSION,
+    target_date: str = None,
 ) -> dict[str, Any]:
     if not Path(model_path).exists():
         raise FileNotFoundError(f"Khong tim thay model: {model_path}")
@@ -329,7 +337,10 @@ def run_daily_prediction(
         raise ValueError(f"Chi ho tro model_type='lightgbm_ranker', nhan duoc: {model_type}")
     model = load_model(model_path)
     features = feature_config["features"]
-    source = fetch_latest_indicator_frame(engine)
+    source = fetch_indicator_frame(engine, target_date)
+    if source.empty:
+        print(f"Khong co du lieu cho ngay {target_date or 'latest'}")
+        return {}
     source = enrich_derived_features(source)
     predictions, skipped = score_frame(model, source, features)
     resolved_version = model_version
@@ -350,8 +361,18 @@ def main():
     parser.add_argument("--model", default=DEFAULT_MODEL_PATH, help="Duong dan file LightGBM ranker .txt")
     parser.add_argument("--features", default=DEFAULT_FEATURES_PATH, help="Duong dan file feature config .json")
     parser.add_argument("--model-version", default=DEFAULT_MODEL_VERSION, help="Model version de luu vao DB")
+    parser.add_argument("--start-date", help="Ngay bat dau backfill (YYYY-MM-DD)")
+    parser.add_argument("--end-date", help="Ngay ket thuc backfill (YYYY-MM-DD)")
     args = parser.parse_args()
-    run_daily_prediction(args.model, args.features, args.model_version)
+    
+    if args.start_date and args.end_date:
+        dates = pd.date_range(start=args.start_date, end=args.end_date, freq='B')
+        for d in dates:
+            date_str = d.strftime("%Y-%m-%d")
+            print(f"\n--- Chay du doan cho ngay {date_str} ---")
+            run_daily_prediction(args.model, args.features, args.model_version, target_date=date_str)
+    else:
+        run_daily_prediction(args.model, args.features, args.model_version)
 
 
 if __name__ == "__main__":

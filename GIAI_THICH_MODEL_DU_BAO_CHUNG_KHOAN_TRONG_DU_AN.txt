@@ -1,0 +1,875 @@
+GIAI THICH DAY DU VE MO HINH DU BAO CHUNG KHOAN DANG TRAIN TRONG DU AN
+=======================================================================
+
+1. MO HINH NAY LA GI?
+---------------------
+Mo hinh AI trong du an nay khong phai la model chat, khong phai LLM, va cung khong phai model du doan "gia exact" cua co phieu.
+
+Mo hinh thuc te dang duoc train va su dung trong du an la:
+
+- Ten loai: LightGBM Ranker
+- Objective: lambdarank
+- Bai toan: cross-sectional ranking
+- Muc tieu: xep hang co phieu nao co kha nang manh hon thi truong trong 5 phien toi
+
+Noi ngan gon:
+- Model khong tra loi cau hoi "mai gia VCB se la bao nhieu?"
+- Model tra loi cau hoi "trong toan bo tap co phieu hom nay, ma nao co kha nang outperform VNINDEX trong 5 phien toi?"
+
+Day la mot khac biet rat quan trong.
+
+2. MUC DICH THAT SU CUA MODEL
+-----------------------------
+Model duoc xay dung de phuc vu mot quyet dinh dau tu thuc dung:
+
+- Chon ra nhom co phieu manh nhat trong ngay
+- Loai bo nhom co phieu yeu nhat trong ngay
+- Tao diem xep hang de dashboard, API, hoac quy trinh giao dich co the dung duoc
+
+Trong code, output cua model duoc dua ve cac nhom:
+
+- TOP_STRONG: top 10 phan tram diem cao nhat
+- TOP: tu 10 phan tram den 30 phan tram
+- NEUTRAL: vung trung lap
+- WEAK: tu 70 phan tram den duoi 90 phan tram
+- WEAK_STRONG: 10 phan tram yeu nhat
+
+Vi vay, trong du an nay, trong tam cua model khong phai "forecast gia tri tuyet doi", ma la:
+
+- relative strength
+- alpha so voi thi truong
+- kha nang xep hang dung top-k co phieu
+
+3. TAI SAO CHON KIEU MODEL NAY THAY VI REGRESSION HAY CLASSIFICATION?
+---------------------------------------------------------------------
+Trong chung khoan, du doan gia exact rat kho vi:
+
+- nhieu nhieu
+- noise cao
+- bien dong phu thuoc tin tuc, dong tien, tam ly, vi mo
+- ngay ca khi huong du doan dung, gia exact van co the sai xa
+
+Neu dung regression:
+- model phai doan mot con so lien tuc
+- rat de bi sai so lon
+
+Neu dung classification tang/giam:
+- qua tho, vi chi cho biet len hay xuong
+- khong giup xep uu tien co phieu nao tot hon co phieu nao
+
+LightGBM Ranker phu hop hon vi:
+
+- no hoc cach so sanh cac ma trong cung mot ngay
+- no toi uu viec chon top-k
+- no hop voi cach van hanh danh muc hon
+- no gan voi quyet dinh thuc te cua nguoi dung: mua nhom manh nhat, tranh nhom yeu nhat
+
+4. MODEL DUA TREN Y TUONG GI?
+-----------------------------
+Y tuong cot loi la:
+
+"Mot co phieu tot khong nen duoc danh gia don doc, ma nen duoc dat trong boi canh toan thi truong cua cung ngay giao dich."
+
+Vi du:
+- RSI = 65 cua mot ma co the la tot trong ngay thi truong yeu
+- nhung cung RSI = 65 co the khong dac biet neu ca thi truong deu dang rat manh
+
+Vi vay model dung "cross-sectional ranking":
+- trong tung trading_date, cac co phieu duoc dat len ban can voi nhau
+- model hoc cach nhan dien ma nao xung dang dung tren nhung ma con lai
+
+5. LABEL MUC TIEU MODEL HOC LA GI?
+----------------------------------
+Target chinh trong notebook train la:
+
+- alpha_5d = return_5d_stock - return_5d_vnindex
+
+Giai thich:
+- return_5d_stock: ty suat sinh loi cua co phieu sau 5 phien
+- return_5d_vnindex: ty suat sinh loi cua VNINDEX sau 5 phien
+- alpha_5d: muc vuot troi cua co phieu so voi thi truong
+
+Neu alpha_5d > 0:
+- co phieu manh hon VNINDEX trong 5 phien sau
+
+Neu alpha_5d < 0:
+- co phieu yeu hon VNINDEX trong 5 phien sau
+
+Day la trong tam ly thuyet cua ca he thong:
+- khong can co phieu tang tuyet doi moi la tot
+- neu thi truong giam nhung ma do giam it hon thi truong, van co the duoc xem la manh tuong doi
+
+6. VI SAO KHONG HOC TRUC TIEP alpha_5d MA LAI TAO rank_label?
+--------------------------------------------------------------
+Model ranker khong hoc tot nhat tren gia tri thuc lien tuc theo kieu regression. No hoc tot hon khi du lieu duoc dua ve muc xep hang.
+
+Trong notebook:
+
+- alpha_5d duoc rank theo tung trading_date
+- sau do chia thanh 5 muc nhan
+- bien nhan do la rank_label
+
+Cong thuc logic:
+- tinh percentile cua alpha_5d trong ngay
+- floor(percentile * 5)
+- clip vao [0, 4]
+
+Y nghia:
+- nhom 4: manh nhat trong ngay
+- nhom 0: yeu nhat trong ngay
+
+Noi cach khac:
+- model khong hoc "alpha = 3.2%"
+- model hoc "ma nay thuoc nhom manh hon phan lon phan con lai trong ngay"
+
+Dieu nay lam bai toan on dinh hon va sat muc tieu ranking hon.
+
+7. DU LIEU TRAIN DEN TU DAU?
+----------------------------
+Theo notebook train:
+
+- File train: all_stocks_train.csv
+- Co them du lieu VNINDEX de tinh boi canh thi truong
+- Co loc exchange: HOSE, HNX
+- Loai bo VNINDEX khoi tap co phieu can xep hang
+- Gioi han thoi gian train tu START_DATE = 2021-01-01
+- Chi giu cac ma co volume_sma_20 > 100000
+
+Y nghia cac dieu kien loc:
+
+- HOSE, HNX: tap trung vao vu tru co phieu chinh
+- volume_sma_20 > 100000: loai bo ma thanh khoan qua thap
+- co VNINDEX: de tinh alpha va feature tuong doi
+
+Model khong hoc tu text, tin tuc, bao cao tai chinh, hay mang xa hoi.
+No hoc chu yeu tu:
+
+- gia
+- khoi luong
+- chi bao ky thuat
+- boi canh thi truong chung
+
+8. FEATURE LA GI? VI SAO PHAI HIEU FEATURE?
+-------------------------------------------
+Feature la cac bien dau vao ma model dung de dua ra score.
+
+No la "thu model duoc phep nhin".
+
+Neu target la thu model can hoc, thi feature la bang chung de model dua vao ma hoc.
+
+Trong du an nay, file lgbm_alpha_5d_features.json cho thay model dang dung 49 feature.
+
+Co the chia thanh 6 nhom lon.
+
+9. NHOM FEATURE 1: TREND VA MOMENTUM
+------------------------------------
+Bao gom:
+
+- price_vs_sma20
+- price_vs_sma50
+- sma20_vs_sma50
+- price_momentum_5
+- price_momentum_10
+- price_momentum_20
+
+Y nghia:
+- Do co phieu dang o tren hay duoi xu huong trung binh
+- Do toc do tang gia trong 5, 10, 20 phien
+- Xac dinh co phieu dang co xu huong tang, giam, hay di ngang
+
+Vi du:
+- price_vs_sma20 > 0: gia dang tren SMA20
+- sma20_vs_sma50 > 0: xu huong ngan/trung han nghieng ve tang
+
+10. NHOM FEATURE 2: DAO DONG VA SUC MANH XU HUONG
+-------------------------------------------------
+Bao gom:
+
+- macd_norm
+- macd_hist_norm
+- adx_14
+- di_plus
+- di_minus
+- rsi_14
+- stoch_k
+- stoch_d
+- williams_r
+
+Y nghia:
+- MACD va MACD histogram: nhin gia toc cua xu huong
+- ADX: do do manh cua xu huong, khong quan tam tang hay giam
+- DI+ va DI-: xac dinh phe tang hay phe giam chiem uu the
+- RSI, Stochastic, Williams %R: xac dinh trang thai qua mua, qua ban, va xung luc ngan han
+
+11. NHOM FEATURE 3: VOLATILITY VA RUI RO
+----------------------------------------
+Bao gom:
+
+- bb_pct_b
+- bb_width_norm
+- atr_pct
+
+Y nghia:
+- bb_pct_b: gia dang o vi tri nao trong Bollinger Band
+- bb_width_norm: do rong band, the hien muc do co/nen bien dong
+- atr_pct: do rung lac tuong doi so voi gia
+
+Nhom nay giup model phan biet:
+- ma dang tich luy
+- ma dang bung no
+- ma dang bien dong qua gac
+
+12. NHOM FEATURE 4: DONG TIEN VA THANH KHOAN
+--------------------------------------------
+Bao gom:
+
+- cmf_20
+- volume_ratio
+- volume_momentum_5
+
+Y nghia:
+- cmf_20: dong tien Chaikin, uoc luong ap luc vao/ra
+- volume_ratio: khoi luong hom nay so voi trung binh
+- volume_momentum_5: da tang/giam cua khoi luong ngan han
+
+Chung khoan khong chi la gia.
+Gia tang ma khong co khoi luong xac nhan thuong kem tin cay hon.
+
+13. NHOM FEATURE 5: NEN NHAT VA CANDLE PATTERN
+----------------------------------------------
+Bao gom:
+
+- candle_body_pct
+- candle_upper_pct
+- candle_lower_pct
+- is_doji
+- is_hammer
+- is_bull_engulfing
+- is_bear_engulfing
+- is_morning_star
+- is_evening_star
+
+Y nghia:
+- body, bong tren, bong duoi duoc chuan hoa theo gia
+- cac bien is_* la bien nhi phan 0/1
+- model duoc biet hom nay co xuat hien mau nen dao chieu hoac xac nhan nao khong
+
+14. NHOM FEATURE 6: BOI CANH THI TRUONG VA SUC MANH TUONG DOI
+-------------------------------------------------------------
+Bao gom:
+
+- vnindex_momentum_5
+- vnindex_momentum_20
+- vnindex_rsi
+- rel_momentum_5
+- rel_momentum_20
+- rsi_vs_vnindex
+
+Day la nhom rat quan trong.
+
+Vi du:
+- mot ma tang 3% trong 5 ngay la tot
+- nhung neu VNINDEX tang 6% thi ma do that ra dang yeu tuong doi
+
+Do do:
+- rel_momentum_5 = price_momentum_5 - vnindex_momentum_5
+- rel_momentum_20 = price_momentum_20 - vnindex_momentum_20
+- rsi_vs_vnindex = rsi_14 - vnindex_rsi
+
+Nhom nay the hien dung triet ly cua he thong:
+- uu tien outperform
+- khong chi nhin absolute return
+
+15. NHOM FEATURE 7: CROSS-SECTIONAL RANK FEATURES
+-------------------------------------------------
+Ngoai feature goc, du an con tao cac feature rank theo tung ngay:
+
+- price_momentum_5_rank_pct
+- price_momentum_10_rank_pct
+- price_momentum_20_rank_pct
+- rsi_14_rank_pct
+- stoch_k_rank_pct
+- stoch_d_rank_pct
+- williams_r_rank_pct
+- bb_pct_b_rank_pct
+- volume_ratio_rank_pct
+- cmf_20_rank_pct
+- rel_momentum_5_rank_pct
+- rel_momentum_20_rank_pct
+- rsi_vs_vnindex_rank_pct
+
+Y nghia:
+- khong chi biet gia tri RSI = 63
+- ma biet RSI nay dang dung thu bao nhieu percentile trong ca thi truong hom do
+
+Day la mot diem rat hay cua model.
+No giup model:
+
+- giam anh huong cua che do thi truong chung
+- tap trung vao vi tri tuong doi cua tung ma
+- phu hop ban chat ranking hon
+
+16. DU LIEU DUOC TIEN XU LY NHU THE NAO?
+---------------------------------------
+Qua trinh train co nhieu buoc tien xu ly quan trong:
+
+- bo dong trung lap theo symbol va trading_date
+- sort theo symbol va trading_date
+- merge du lieu VNINDEX vao tung dong co phieu
+- tinh alpha_5d
+- drop cac dong khong co alpha_5d
+- forward fill feature theo tung symbol
+- drop cac dong van con thieu feature
+- clip alpha_5d vao [-0.30, 0.30]
+- clip nhieu feature tuong doi vao cac khoang hop ly
+
+Vi sao phai clip?
+- de giam tac dong cua outlier
+- tranh mot so ngay co bien dong qua lon lam model hoc lech
+
+17. TRAIN / VALID / TEST CHIA NHU THE NAO?
+------------------------------------------
+Notebook dang chia theo thoi gian, khong chia ngau nhien.
+
+Day la cach dung trong bai toan tai chinh.
+
+Thong so chia:
+- TEST_CUTOFF = 2025-10-01
+- VALID_DAYS = 90
+- VALID_CUTOFF = TEST_CUTOFF - 90 ngay
+
+Nghia la:
+- Train: trading_date < VALID_CUTOFF
+- Validation: VALID_CUTOFF <= trading_date < 2025-10-01
+- Test: trading_date >= 2025-10-01
+
+Tai sao phai chia theo thoi gian?
+- de tranh look-ahead bias
+- de mo phong tinh huong thuc te: hoc qua khu, danh gia tren tuong lai
+
+Neu tron ngau nhien:
+- model co the thay mau cua tuong lai trong train
+- ket qua danh gia se dep gia tao
+
+18. TAI SAO CO MIN_GROUP_SIZE?
+------------------------------
+Trong notebook:
+
+- MIN_GROUP_SIZE = 150
+
+Nghia la chi nhung trading_date co it nhat 150 ma hop le moi duoc giu lai de train.
+
+Tai sao?
+- ranking can so luong ma du lon moi co y nghia
+- ngay co qua it ma se tao rank kem on dinh
+- NDCG/top-k khi danh gia cung co y nghia hon tren vu tru du rong
+
+19. LIGHTGBM RANKER TINH TOAN KIEU GI?
+-------------------------------------
+Day la phan can hieu that ro.
+
+LightGBM la mot he gradient boosting tree.
+No xay dung nhieu cay quyet dinh nho, roi cong don ket qua.
+
+Trong bai toan nay:
+- moi dong du lieu la mot co phieu tai mot trading_date
+- cac dong duoc group theo trading_date
+- trong tung group, model hoc cach dat score sao cho ma co alpha cao dung tren ma co alpha thap
+
+Objective lambdarank khong toi uu MSE nhu regression.
+No toi uu mot ham mat mat gan voi chat luong ranking, dac biet la NDCG.
+
+Y tuong cua no:
+- neu trong cung mot ngay, ma A dang ra phai xep tren ma B
+- nhung model dang xep nguoc
+- gradient se day score cua A len va/hoac keo score cua B xuong
+
+Qua nhieu cay:
+- model hoc duoc nhung nguong tach feature
+- vi du: neu rel_momentum_20 cao, volume_ratio tot, vnindex_rsi vua phai, stoch_k tot hon phan lon thi diem tang
+
+20. TREE MODEL HOAT DONG RA SAO?
+--------------------------------
+Moi cay quyet dinh hoat dong bang cac cau hoi kieu:
+
+- feature X co lon hon nguong T khong?
+- neu co, di nhanh trai
+- neu khong, di nhanh phai
+
+Cuoi cay la mot leaf value.
+Tong score cuoi cung = tong dong gop cua nhieu cay.
+
+Trong file model da luu:
+- objective = lambdarank
+- num_leaves = 63
+- learning_rate = 0.03
+- feature_fraction = 0.8
+- bagging_fraction = 0.8
+- lambda_l1 = 0.2
+- lambda_l2 = 1.0
+
+Day la cac co che giup:
+- hoc duoc quan he phi tuyen
+- tranh overfit qua muc
+
+21. CAC HYPERPARAMETER CHINH CO Y NGHIA GI?
+------------------------------------------
+learning_rate = 0.03
+- moi cay chi dieu chinh nhe
+- hoc cham hon nhung an toan hon
+
+n_estimators = 1500
+- toi da 1500 cay/iterations neu can
+- ket hop voi early stopping
+
+num_leaves = 63
+- moi cay co toi da 63 la
+- cang lon cang hoc quan he phuc tap hon
+
+min_child_samples = 40
+- moi nut can du mau toi thieu
+- giam overfit
+
+subsample = 0.8
+- moi lan chi lay 80 phan tram mau
+- tang kha nang tong quat hoa
+
+colsample_bytree = 0.8
+- moi cay chi lay 80 phan tram feature
+- giam phu thuoc qua muc vao mot so feature
+
+reg_alpha = 0.2, reg_lambda = 1.0
+- regularization L1 va L2
+- giam do phuc tap huu hieu cua model
+
+metric = ndcg
+- do chat luong ranking
+- phu hop hon accuracy hay RMSE
+
+eval_at = [10, 20, 50]
+- danh gia kha nang xep hang dung o top 10, top 20, top 50
+- rat sat voi muc tieu chon danh muc top-k
+
+22. NDCG LA GI? TAI SAO NO QUAN TRONG?
+--------------------------------------
+NDCG = Normalized Discounted Cumulative Gain.
+
+No la metric danh cho ranking.
+
+Tu tuong:
+- item dung xuat hien cang cao trong bang xep hang thi cang co gia tri
+- sai o top dau bi phat nang hon sai o cuoi bang
+
+Trong dau tu, dieu nay rat hop ly vi:
+- nguoi dung thuong chi mua mot so ma top dau
+- neu top 10 chon dung, model co gia tri thuc te cao
+- duoi bang xep hang co sai mot chut cung it anh huong hon
+
+23. QUA TRINH TRAIN THUC TE DI QUA NHUNG BUOC NAO?
+-------------------------------------------------
+Co the tom lai day du nhu sau:
+
+Buoc 1:
+- Load all_stocks_train.csv
+
+Buoc 2:
+- Tao khung VNINDEX va tinh vnindex_momentum_5, vnindex_momentum_20, vnindex_rsi
+
+Buoc 3:
+- Loc co phieu HOSE/HNX, volume_sma_20 > 100000, trading_date >= 2021-01-01
+
+Buoc 4:
+- Merge VNINDEX vao tung co phieu theo trading_date
+
+Buoc 5:
+- Tinh alpha_5d = return_5d - vnindex_return_5d
+
+Buoc 6:
+- Tao bo feature goc + feature tuong doi + feature rank theo ngay
+
+Buoc 7:
+- Bo dong loi, fill du lieu thieu hop ly, clip outlier
+
+Buoc 8:
+- Chi giu ngay co it nhat 150 ma
+
+Buoc 9:
+- Chuyen alpha_5d thanh rank_label gom 5 muc
+
+Buoc 10:
+- Chia train/valid/test theo thoi gian
+
+Buoc 11:
+- Train LightGBM Ranker voi objective lambdarank
+
+Buoc 12:
+- Danh gia top-k tren validation va test
+
+Buoc 13:
+- Luu model, metadata feature, va feature importance
+
+24. MODEL DANH GIA KET QUA NHU THE NAO?
+--------------------------------------
+Notebook khong chi in metric ranking, ma con danh gia tren logic dau tu.
+
+No tinh:
+- avg_alpha cua top-k
+- alpha_win_rate cua top-k
+- avg_stock_return cua top-k
+- stock_win_rate cua top-k
+
+Cho cac muc:
+- top 10
+- top 20
+- top 50
+
+Ngoai ra con so sanh voi "universe average":
+- muc alpha trung binh cua toan thi truong trong test
+- muc return trung binh cua toan thi truong trong test
+
+Day la diem quan trong de danh gia model co gia tri thuc khong.
+
+25. NGUOI DUNG NEN NHIN VAO GI DE BIET MODEL CO ON KHONG?
+---------------------------------------------------------
+Day la phan rat quan trong neu muon "theo" model mot cach nghiem tuc.
+
+Can nhin toi thieu 8 nhom tieu chi:
+
+1. Top-k alpha co duong khong?
+- Neu top 10 / top 20 co avg_alpha duong mot cach on dinh, day la dau hieu tot
+
+2. Alpha win rate co > 50% khong?
+- Neu so ma outperform thi truong chi quanh 50% hoac thap hon, mo hinh yeu
+
+3. Top-k return co cao hon universe khong?
+- Neu khong hon trung binh thi truong, model ranking co the chua co gia tri
+
+4. Validation va test co giong nhau khong?
+- Neu valid dep nhung test xau, kha nang cao la overfit
+
+5. Hieu qua co on dinh theo ngay khong?
+- Khong chi nhin mean
+- Can xem do lech, drawdown, chuoi ngay thua
+
+6. Feature importance co hop ly khong?
+- Neu top feature la cac bien vo nghia, can canh giac
+- Neu top feature nam trong nhom momentum, relative strength, volume, regime thi hop ly hon
+
+7. Ti le skipped_symbols co cao khong?
+- Trong pipeline du doan hang ngay, neu qua nhieu ma bi bo qua vi thieu feature, chat luong van hanh giam
+
+8. Model co con phu hop voi che do thi truong hien tai khong?
+- Thi truong thay doi che do
+- model tot trong trend market co the yeu trong sideway hoac bear market
+
+26. FILE MODEL HIEN TAI DANG CHO THAY DIEU GI?
+----------------------------------------------
+Tu file lgbm_alpha_5d_ranker.txt trong du an:
+
+- objective: lambdarank
+- metric: ndcg
+- feature count: 49 feature
+- feature importance da luu san
+
+Top feature importance dang thay:
+- stoch_k
+- volume_ratio
+- candle_lower_pct
+- vnindex_rsi
+- price_momentum_10
+- macd_norm
+- adx_14
+- price_momentum_10_rank_pct
+- macd_hist_norm
+- rsi_vs_vnindex
+
+Dieu nay noi len:
+- model rat nhay voi xung luc ngan han
+- co su dung thanh khoan
+- co nhin boi canh thi truong chung
+- co nhin suc manh tuong doi
+
+No cung cho thay triet ly model hien tai la:
+- momentum + relative strength + market regime + volume confirmation
+
+27. OUTPUT CUA MODEL LA GI?
+---------------------------
+Trong pha suy luan hang ngay, model tra ra:
+
+- ai_score: diem tho cua model
+- ai_signal: nhan TOP_STRONG / TOP / NEUTRAL / WEAK / WEAK_STRONG
+- target_date: ngay muc tieu sau 5 phien lam viec
+
+Can luu y:
+- ai_score khong phai xac suat
+- ai_score cung khong phai % tang gia
+- ai_score la diem ranking noi bo de so sanh giua cac ma trong cung mot ngay
+
+Vi vay:
+- score 0.8 khong co nghia la chac tang 80%
+- no chi co nghia la ma nay duoc model cham cao hon phan lon ma khac
+
+28. PHA SUY LUAN HANG NGAY DIEN RA NHU THE NAO?
+----------------------------------------------
+File daily_predict.py cho thay quy trinh:
+
+Buoc 1:
+- load model tu lgbm_alpha_5d_ranker.txt
+
+Buoc 2:
+- load danh sach feature tu lgbm_alpha_5d_features.json
+
+Buoc 3:
+- lay trading_date moi nhat hop le tu technical_indicators
+- chi giu universe du dieu kien thanh khoan va exchange
+
+Buoc 4:
+- them feature tuong doi va feature rank theo trading_date
+
+Buoc 5:
+- drop cac dong thieu feature
+
+Buoc 6:
+- model.predict(X)
+
+Buoc 7:
+- xep hang ai_score theo trading_date
+- gan ai_signal theo percentile score
+
+Buoc 8:
+- tinh target_date = predict_date + 5 phien lam viec
+
+Buoc 9:
+- luu vao bang ml_predictions
+
+29. DATABASE VA TABLE LIEN QUAN LA GI?
+--------------------------------------
+De model chay duoc, pipeline dua tren cac bang chinh:
+
+- quote_history
+- technical_indicators
+- listing
+- ml_predictions
+
+Vai tro:
+- quote_history: gia va khoi luong goc
+- technical_indicators: bang feature da tinh san
+- listing: exchange, industry, sector
+- ml_predictions: noi luu ket qua du doan
+
+30. TECHNICAL_INDICATORS DUOC TAO NHU THE NAO?
+----------------------------------------------
+File compute_indicators.py tao bang feature tu du lieu gia.
+
+No tinh:
+- SMA, EMA, MACD, MACD signal, MACD hist
+- ADX, DI+, DI-
+- RSI, Stochastic, Williams %R
+- Bollinger Bands, ATR
+- OBV, VWAP, CMF, volume SMA, volume ratio
+- cac candlestick pattern
+- cac normalized feature
+- cac target label co ban nhu direction_5d, direction_10d, return_5d
+
+Can hieu ro:
+- model ranker hien tai khong train truc tiep tren direction_5d
+- no chu yeu dung return_5d de tao alpha_5d, roi tu do tao nhan ranking
+
+31. TRONG TAM CUA MODEL LA GI?
+------------------------------
+Neu phai tom model nay thanh 1 cau:
+
+"Model nay dat trong tam vao viec tim co phieu co suc manh tuong doi vuot thi truong trong 5 phien toi, dua tren momentum, dong tien, tinh trang ky thuat, va boi canh thi truong."
+
+Neu phai tom thanh 4 trong tam:
+
+- Relative performance so voi VNINDEX
+- Ranking top-k thay vi forecast gia exact
+- Technical state + liquidity + market regime
+- Tinh thuc chien trong van hanh hang ngay
+
+32. UU DIEM CUA MODEL NAY
+-------------------------
+1. Dung bai toan hon regression gia exact
+- Sat hon voi cach ra quyet dinh dau tu
+
+2. Chiu duoc quan he phi tuyen
+- Tree-based model bat duoc nguong va tuong tac feature
+
+3. Khong can scale feature phuc tap nhu nhieu model khac
+- LightGBM xu ly kha tot voi feature da dang
+
+4. Co the giai thich duoc mot phan qua feature importance
+- Tot hon mot so mo hinh qua den
+
+5. Suy luan nhanh, de deploy
+- Rat hop voi daily batch prediction
+
+6. Tap trung vao alpha
+- Tot cho bai toan stock selection
+
+33. NHUOC DIEM VA GIOI HAN CUA MODEL
+------------------------------------
+1. Khong nhin thay tin tuc, vi mo, ket qua kinh doanh
+- Neu bien dong den tu thong tin phi ky thuat, model co the cham phan ung
+
+2. De bi regime shift
+- Quy luat hoc tu qua khu co the giam tac dung khi thi truong doi pha
+
+3. Co nguy co overfit neu tuning qua da
+- Nhat la trong bai toan tai chinh co signal yeu
+
+4. Feature phu thuoc manh vao quality cua bang technical_indicators
+- Tinh sai feature la hu model
+
+5. Chi danh gia suc manh tuong doi 5 phien
+- Khong phai model dau tu dai han
+
+6. Score khong phai probability
+- Neu user hieu sai ai_score se rat nguy hiem
+
+34. CAC RUI RO PHUONG PHAP LUAN CAN CANH GIAC
+---------------------------------------------
+Neu muon danh gia model mot cach chat che, phai canh giac:
+
+- Look-ahead bias
+- Survivorship bias
+- Data leakage
+- Overfitting tren validation
+- Chon metric dep nhung khong co gia tri giao dich
+- Khong tinh chi phi giao dich, truot gia, thanh khoan thuc
+
+Vi du:
+- top-k co avg_alpha dep tren file test
+- nhung neu trade that ma thanh khoan kem, spread cao, thi loi nhuan that co the xau
+
+35. NGUOI DUNG NEN TIN MODEL DEN MUC NAO?
+-----------------------------------------
+Nen xem model nhu:
+- bo loc co hoi
+- cong cu uu tien ma
+- mot lop ho tro ra quyet dinh
+
+Khong nen xem model nhu:
+- may tien tri chac chan
+- he thong thay the hoan toan phan tich con nguoi
+- cong cu ra lenh khong can kiem soat rui ro
+
+Cach dung dung:
+- dung model de loc top ung vien
+- ket hop voi quan tri von, tin tuc, su kien, va thanh khoan
+- theo doi hieu qua theo rolling window
+
+36. MUON BIET MODEL "OKE DE THEO" THI CAN KIEM TRA GI DINH KY?
+--------------------------------------------------------------
+Nen lap dashboard hoac bao cao dinh ky cho cac chi so sau:
+
+- Top 10 avg_alpha theo ngay
+- Top 20 avg_alpha theo ngay
+- Win rate alpha > 0
+- Win rate return > 0
+- So sanh top-k voi universe
+- Phan bo signal TOP/TOP_STRONG/WEAK
+- So ma bi skipped vi thieu feature
+- Hieu qua theo industry/sector
+- Hieu qua theo tung regime thi truong
+- Feature drift va distribution drift
+
+Neu cac chi so nay suy giam trong mot thoi gian dai:
+- can retrain
+- can xem lai feature
+- can xem thi truong da doi che do chua
+
+37. RETRAIN NEN LAM NHU THE NAO?
+--------------------------------
+Ve ly thuyet va thuc te, nen:
+
+- cap nhat them du lieu moi
+- giu nguyen logic split theo thoi gian
+- danh gia out-of-sample
+- so sanh model moi voi model cu tren cung bo test/forward period
+- khong thay model chi vi metric dep hon rat nho
+
+Nen co cac ban model version nhu:
+- lgbm_alpha_5d_ranker_v1
+- v2
+- v3
+
+Va ghi ro:
+- train den ngay nao
+- feature set nao
+- metric top-k ra sao
+
+38. VI SAO FILE JSON FEATURE RAT QUAN TRONG?
+-------------------------------------------
+File lgbm_alpha_5d_features.json luu:
+
+- model_type
+- target
+- danh sach feature
+- min_group_size
+- n_label_bins
+
+No la hop dong giua train va inference.
+
+Neu train mot model voi 49 feature ma khi predict lai dua 48 feature hoac thu tu khac:
+- ket qua se sai
+- thậm chi crash
+
+Vi vay file nay la phan rat quan trong cua deploy.
+
+39. KHI XEM MOT MODEL TREE-BASED NHU THE NAY, CAN DAT NHUNG CAU HOI NAO?
+------------------------------------------------------------------------
+1. Target co dung voi bai toan kinh doanh khong?
+2. Split theo thoi gian co sach khong?
+3. Feature co duoc tao ma khong lo data leakage khong?
+4. Metric co phu hop voi quyet dinh top-k khong?
+5. Test co that su out-of-sample khong?
+6. Hieu qua co on dinh hay chi dep o mot vai giai doan?
+7. Co tinh chi phi giao dich va thanh khoan chua?
+8. Quy trinh retrain, version, monitoring da co chua?
+
+Neu tra loi duoc nhung cau hoi nay, moi co co so noi model "oke de theo".
+
+40. KET LUAN NGAN GON NHUNG CHINH XAC
+-------------------------------------
+Mo hinh trong du an nay la mot he thong chon co phieu dua tren xep hang, su dung LightGBM Ranker de tim cac ma co alpha 5 ngay cao hon so voi VNINDEX.
+
+No dua tren:
+- du lieu gia va khoi luong lich su
+- cac chi bao ky thuat
+- feature dong tien
+- candlestick pattern
+- boi canh VNINDEX
+- feature xep hang tuong doi trong ngay
+
+No tinh toan bang:
+- tao feature
+- tao alpha_5d
+- bien alpha thanh rank_label
+- group theo trading_date
+- train lambdarank de toi uu chat luong xep hang
+- sinh ai_score va ai_signal cho tung ma moi ngay
+
+Trong tam cua no la:
+- relative strength
+- top-k stock selection
+- outperform thi truong trong 5 phien toi
+
+Muon danh gia no co tot hay khong, khong duoc chi nhin mot vai du doan dung sai.
+Phai nhin he thong:
+
+- top-k alpha
+- win rate
+- out-of-sample test
+- do on dinh qua thoi gian
+- feature importance
+- drift
+- va kha nang song duoc trong dieu kien giao dich thuc te
+
+Neu can noi mot cach thang:
+- day la mot model ranking co dinh huong dung cho stock selection ngan han
+- no hop ly ve mat thiet ke
+- nhung gia tri that cua no phai duoc chung minh bang backtest sach, test out-of-sample, va theo doi live performance lien tuc
+
+HET

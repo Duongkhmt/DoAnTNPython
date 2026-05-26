@@ -49,9 +49,9 @@ def _signal_filter_clause(signal: str) -> tuple[str, dict[str, Any]]:
     if normalized == "ALL":
         return "1 = 1", {}
     if normalized == "TOP":
-        return "p.ai_signal IN ('TOP', 'TOP_STRONG')", {}
+        return "p.ai_signal IN ('TOP', 'TOP_STRONG', 'MUA', 'MUA_MANH')", {}
     if normalized == "WEAK":
-        return "p.ai_signal IN ('WEAK', 'WEAK_STRONG')", {}
+        return "p.ai_signal IN ('WEAK', 'WEAK_STRONG', 'BAN', 'BAN_MANH')", {}
     return "p.ai_signal = :signal", {"signal": normalized}
 
 
@@ -266,11 +266,12 @@ def screening_history(days: int = Query(default=30, ge=1, le=365)):
         t.return_5d,
         v.return_5d AS vnindex_return_5d,
         (t.return_5d - v.return_5d) AS alpha_5d,
-        CASE WHEN p.ai_signal IN ('TOP', 'TOP_STRONG') THEN 1 ELSE 0 END AS is_top_signal,
+        CASE WHEN p.ai_signal IN ('TOP', 'TOP_STRONG', 'MUA', 'MUA_MANH') THEN 1 ELSE 0 END AS is_top_signal,
         CASE
             WHEN t.return_5d IS NULL OR v.return_5d IS NULL THEN NULL
-            WHEN p.ai_signal IN ('TOP', 'TOP_STRONG') AND (t.return_5d - v.return_5d) > 0 THEN 1
-            WHEN p.ai_signal IN ('WEAK', 'WEAK_STRONG') AND (t.return_5d - v.return_5d) < 0 THEN 1
+            WHEN p.ai_signal IN ('NEUTRAL', 'TRUNG_TINH') THEN NULL
+            WHEN p.ai_signal IN ('TOP', 'TOP_STRONG', 'MUA', 'MUA_MANH') AND (t.return_5d - v.return_5d) > 0 THEN 1
+            WHEN p.ai_signal IN ('WEAK', 'WEAK_STRONG', 'BAN', 'BAN_MANH') AND (t.return_5d - v.return_5d) < 0 THEN 1
             ELSE 0
         END AS is_correct_relative
     FROM ml_predictions p
@@ -287,9 +288,9 @@ def screening_history(days: int = Query(default=30, ge=1, le=365)):
     if history.empty:
         return {"days": days, "items": [], "daily_win_rate": []}
 
-    # Convert 1/0 to True/False for better Jackson mapping
-    history["is_top_signal"] = history["is_top_signal"].astype(bool)
-    history["is_correct_relative"] = history["is_correct_relative"].astype(bool)
+    # Convert 1/0 to nullable boolean for better Jackson mapping
+    history["is_top_signal"] = history["is_top_signal"].astype('boolean')
+    history["is_correct_relative"] = history["is_correct_relative"].astype('boolean')
 
     stats = (
         history.dropna(subset=["alpha_5d", "is_correct_relative"])
@@ -358,8 +359,9 @@ def market_overview():
         l.industry,
         AVG(p.ai_score) AS avg_ai_score,
         COUNT(*) AS total,
-        COUNT(*) FILTER (WHERE p.ai_signal IN ('TOP', 'TOP_STRONG')) AS top_count,
-        COUNT(*) FILTER (WHERE p.ai_signal IN ('WEAK', 'WEAK_STRONG')) AS weak_count
+        COUNT(*) FILTER (WHERE p.ai_signal IN ('TOP', 'TOP_STRONG', 'MUA', 'MUA_MANH')) AS top_count,
+        COUNT(*) FILTER (WHERE p.ai_signal IN ('WEAK', 'WEAK_STRONG', 'BAN', 'BAN_MANH')) AS weak_count,
+        STRING_AGG(p.symbol, ',' ORDER BY p.ai_score DESC) AS symbols
     FROM ml_predictions p
     LEFT JOIN company l
       ON l.symbol = p.symbol

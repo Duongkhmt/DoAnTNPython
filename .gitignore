@@ -2,6 +2,7 @@
 venv/
 env/
 .venv/
+temp_venv/
 
 # ===== SECRET =====
 .env
