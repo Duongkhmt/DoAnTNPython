@@ -79,6 +79,9 @@ SELECT
     t.candle_body_pct,
     t.candle_upper_pct,
     t.candle_lower_pct,
+    t.price_vs_sma5,
+    t.volatility_10,
+    t.volatility_20,
     t.direction_5d,
     t.direction_10d,
     t.return_5d

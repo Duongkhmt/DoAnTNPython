@@ -99,13 +99,14 @@ c. Ứng dụng Wyckoff trong Hệ thống AI:
 Hệ thống sử dụng các thuật toán nhận diện mẫu hình để tự động phát hiện các sự kiện quan trọng trong cấu trúc Wyckoff như: Spring (Rũ bỏ), Test (Kiểm tra cung), SOS (Dấu hiệu mạnh) và SOW (Dấu hiệu yếu). Các tín hiệu này được mã hóa thành các Feature Vector để đưa vào mô hình LightGBM, giúp AI hiểu được "ngữ cảnh" của thị trường đang ở giai đoạn nào để đưa ra dự báo Alpha 5D chính xác hơn thay vì chỉ nhìn vào các con số kỹ thuật đơn thuần.
 
 1.3.4. Trí tuệ nhân tạo và Machine Learning trong Tài chính
-Các chỉ báo và dữ liệu giá không được dùng độc lập mà được biến đổi thành "feature vector" để mô hình AI học các pattern phi tuyến tính.
+Hệ thống sử dụng phương pháp tiếp cận học máy tiên tiến, kết hợp giữa việc trích xuất đặc trưng định lượng chuyên sâu và kiến trúc mô hình kết hợp (Ensemble) để tối ưu hóa khả năng dự báo và quản trị rủi ro:
 
+- Trích xuất Đặc trưng Định lượng (Qlib Alpha158): Hệ thống không sử dụng dữ liệu một cách rời rạc mà tổng hợp các chỉ báo kỹ thuật, biến động giá và khối lượng thành các véc-tơ đặc trưng (Feature Vectors) đa chiều. Đặc biệt, hệ thống lấy cảm hứng từ bộ tính năng Alpha158 của thư viện định lượng Qlib, tập trung mạnh vào các đặc trưng về động lượng (Momentum) và độ biến động (Volatility) để giúp AI phát hiện các mẫu hình phi tuyến tính tiềm năng.
 
-- Machine Learning (LightGBM Ranker): Sử dụng thuật toán Gradient Boosting tối ưu hóa cho bài toán xếp hạng (Ranking). Áp dụng các kỹ thuật:
-    + GOSS (Gradient-based One-Side Sampling): Tập trung vào dữ liệu có lỗi lớn.
-    + EFB (Exclusive Feature Bundling): Gộp các đặc trưng rời rạc để tăng tốc độ huấn luyện.
-- Định lượng tài chính: Áp dụng các công thức tính Alpha (Extra Return), Relative Strength Index để tìm kiếm cổ phiếu mạnh hơn thị trường chung.
+- Kiến trúc Mô hình Kết hợp (Stacking Ensemble Regressor): Thay vì phụ thuộc vào một thuật toán duy nhất hoặc các mô hình Ranker truyền thống, hệ thống triển khai kiến trúc Ensemble Hồi quy (Regressor) để tăng độ linh hoạt và ổn định:
+    + LightGBM Regressor & XGBoost Regressor: Hai thuật toán Gradient Boosting hàng đầu được sử dụng song song. Thay vì dự đoán giá trị tuyệt đối của cổ phiếu, các mô hình này được huấn luyện để dự báo "alpha_rank_pct" (phần trăm thứ hạng của mức sinh lời vượt trội so với thị trường chung VNINDEX sau 5 phiên). Đây là cách tiếp cận hồi quy (Regression) để xuất ra một điểm số liên tục (AI Score), sau đó điểm số này mới được dùng để xếp hạng tổng thể và chọn lọc nhóm cổ phiếu tiềm năng nhất.
+
+- Quản trị rủi ro tự động (Market Regime Filter): Khác với các hệ thống giao dịch máy móc, dự án tích hợp thêm Bộ lọc Trạng thái Thị trường (Market Regime Filter) vào bước suy luận (Inference). Khi phát hiện thị trường chung (VNINDEX) đang ở pha rủi ro cao, rung lắc hoặc xu hướng giảm (Bearish), thuật toán sẽ tự động hạ cấp (downgrade) các tín hiệu "Mua", giúp phòng thủ tài khoản và giảm thiểu rủi ro Drawdown cho nhà đầu tư.
 
 1.4. Các công nghệ, công cụ sử dụng
 
@@ -175,3 +176,50 @@ MongoDB (Raw Data Lake): Lưu trữ toàn bộ dữ liệu thô (JSON thô gốc
 TimescaleDB / PostgreSQL (Structured Data): Dữ liệu sau khi cào về được làm sạch, đồng bộ múi giờ, ép kiểu số rồi đưa vào các bảng quan hệ.
 Dữ liệu lịch sử giá được nén tự động (TimescaleDB Compression) để tiết kiệm dung lượng.
 Từ các bảng thô này, hệ thống sẽ tự động cập nhật sang các bảng View tối ưu như dashboard_industry_flow (dòng tiền ngành), dashboard_valuation (định giá) và cung cấp đầu vào cho các Mô hình AI học máy (LightGBM Ranker) để tính điểm xếp hạng cổ phiếu hàng ngày.
+
+---
+
+KẾT LUẬN VÀ HƯỚNG PHÁT TRIỂN
+
+1. Kết luận
+1.1. Những kết quả đã đạt được so với mục tiêu ban đầu
+Dự án đã xây dựng thành công một hệ thống Hỗ trợ quyết định đầu tư chứng khoán dựa trên Trí tuệ nhân tạo (AI) toàn diện, bao phủ từ khâu thu thập dữ liệu (ETL) đến ứng dụng người dùng cuối. So với mục tiêu ban đầu, hệ thống đã hoàn thiện các tính năng cốt lõi:
+- Tự động hóa hoàn toàn luồng thu thập dữ liệu: Xây dựng được pipeline cào dữ liệu (Crawler) đa luồng hiệu suất cao, lấy dữ liệu giá, khối lượng, dòng tiền từ các công ty chứng khoán, kết hợp lưu trữ an toàn với cơ chế Dual-Database (MongoDB làm Data Lake và TimescaleDB xử lý chuỗi thời gian).
+- Áp dụng thành công các mô hình Học máy tiên tiến: Đã triển khai kiến trúc Ensemble Regressor (LightGBM & XGBoost) kết hợp các đặc trưng định lượng Qlib Alpha158 để dự báo thứ hạng sức mạnh cổ phiếu (alpha_rank_pct), thay thế hiệu quả cho các phương pháp phân tích kỹ thuật truyền thống.
+- Quản trị rủi ro thông minh: Ứng dụng thành công Bộ lọc trạng thái thị trường (Market Regime Filter) để bảo vệ danh mục đầu tư khi thị trường chung có biến động xấu.
+- Giao diện trực quan, chuyên nghiệp: Hoàn thiện Dashboard hiện đại với ReactJS và các công cụ vẽ biểu đồ chuyên nghiệp (TradingView, Recharts), giúp hiển thị trực quan các phân tích dòng tiền ngành, định giá và cấu trúc Wyckoff.
+
+1.2. Đánh giá ưu điểm và hạn chế
+* Ưu điểm:
+- Kiến trúc hệ thống hiện đại, dễ mở rộng, quy trình rõ ràng (Airflow, Spring Boot, React).
+- Mô hình AI kết hợp nhiều phương pháp định lượng (Alpha158) và bộ lọc rủi ro, mang lại hiệu quả backtest và thực tiễn ổn định.
+- Giao diện người dùng đem lại trải nghiệm mượt mà, cung cấp nhiều góc nhìn sâu sắc tương đương các phần mềm chuyên nghiệp.
+
+* Hạn chế:
+- Dữ liệu thu thập còn phụ thuộc nhiều vào API của các công ty chứng khoán bên thứ ba, có rủi ro về giới hạn truy cập (rate limit) hoặc thay đổi cấu trúc dữ liệu đột biến.
+- Khả năng phân tích real-time (thời gian thực) trong phiên giao dịch chưa thực sự tối ưu do phần lớn số liệu được xử lý theo dạng batch cuối ngày (EOD).
+- Mô hình AI hiện tại mới chủ yếu tập trung vào dữ liệu giá, khối lượng và dòng tiền, chưa kết hợp sâu rộng dữ liệu kinh tế vĩ mô và tin tức sự kiện (Sentiment Analysis).
+
+2. Hướng phát triển trong tương lai
+2.1. Nâng cấp và cải tiến hệ thống hiện tại
+- Tối ưu hóa Nguồn dữ liệu: Tích hợp các nhà cung cấp dữ liệu API trả phí ổn định hơn (như FiinTrade, WiChart) để tiến tới xây dựng biểu đồ và gợi ý giao dịch intraday (tick-by-tick) ngay trong phiên.
+- Cải thiện kiến trúc phân tán: Áp dụng giải pháp Message Queue (như Kafka) để stream dữ liệu thời gian thực thay vì chỉ phụ thuộc vào cơ chế batch processing cuối ngày.
+
+2.2. Đề xuất các tính năng phát triển thêm
+- Phân tích cảm xúc thị trường (Sentiment Analysis): Tích hợp kỹ thuật Xử lý ngôn ngữ tự nhiên (NLP) để phân tích các bài báo tài chính, hoặc thảo luận trên các diễn đàn đầu tư nhằm lượng hóa tâm lý đám đông, tạo thêm biến đầu vào (Feature) độc lập cho mô hình AI.
+- Mở rộng thuật toán Graph Neural Networks (GNN): Nghiên cứu và tích hợp Mạng nơ-ron đồ thị (GNN - PyTorch Geometric) để phân tích chuỗi cung ứng và mối quan hệ tác động chéo giữa các cổ phiếu trong cùng một nhóm ngành.
+- Tính năng Tự cấu hình Backtest cho người dùng: Phát triển module cá nhân hóa, cho phép người dùng tự thiết lập các quy tắc giao dịch dựa trên điểm số AI và kiểm định lại kết quả sinh lời giả định (backtesting) trực tiếp ngay trên Dashboard.
+
+---
+
+TÀI LIỆU THAM KHẢO
+
+[1] G. Ke et al., "LightGBM: A Highly Efficient Gradient Boosting Decision Tree," trong Advances in Neural Information Processing Systems, vol. 30, 2017.
+[2] Meta Platforms, "React – A JavaScript library for building user interfaces," 2023. [Trực tuyến]. Có tại: https://react.dev/
+[3] Microsoft, "Qlib: An AI-oriented Quantitative Investment Platform," 2020. [Trực tuyến]. Có tại: https://github.com/microsoft/qlib
+[4] R. D. Wyckoff, The Richard D. Wyckoff Method of Trading and Investing in Stocks. New York: Wyckoff Associates, 1931.
+[5] Spring, "Spring Boot Reference Documentation," VMware, 2023. [Trực tuyến]. Có tại: https://docs.spring.io/spring-boot/
+[6] T. Chen và C. Guestrin, "XGBoost: A Scalable Tree Boosting System," trong Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining, 2016, tr. 785–794.
+[7] The Apache Software Foundation, "Apache Airflow Documentation," 2023. [Trực tuyến]. Có tại: https://airflow.apache.org/
+[8] Thinh Vu, "Vnstock - Thư viện Python tải dữ liệu chứng khoán Việt Nam," 2023. [Trực tuyến]. Có tại: https://github.com/thinh-vu/vnstock
+[9] Timescale, "TimescaleDB Documentation," 2023. [Trực tuyến]. Có tại: https://docs.timescale.com/

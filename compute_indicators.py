@@ -145,6 +145,11 @@ def create_table():
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_body_pct FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_upper_pct FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_lower_pct FLOAT"))
+        
+        # Qlib Alpha158 features
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma5 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS volatility_10 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS volatility_20 FLOAT"))
     print("✅ Bảng technical_indicators đã sẵn sàng.")
 
 
@@ -357,6 +362,14 @@ def compute_normalized_features(df: pd.DataFrame) -> pd.DataFrame:
     df["candle_body_pct"]  = candle_body_size / (open_p + 1e-6)
     df["candle_upper_pct"] = candle_upper_wick / (open_p + 1e-6)
     df["candle_lower_pct"] = candle_lower_wick / (open_p + 1e-6)
+    
+    # Qlib Alpha158 inspired
+    sma_5 = close.rolling(5).mean()
+    df["price_vs_sma5"] = (close - sma_5) / (sma_5 + 1e-6)
+    
+    log_ret = np.log(close / close.shift(1).replace(0, np.nan))
+    df["volatility_10"] = log_ret.rolling(10).std()
+    df["volatility_20"] = log_ret.rolling(20).std()
 
     # Clip tất cả về [-0.5, 0.5]
     cols_to_clip = [
@@ -364,7 +377,8 @@ def compute_normalized_features(df: pd.DataFrame) -> pd.DataFrame:
         "price_momentum_5", "price_momentum_10", "price_momentum_20",
         "volume_momentum_5", "macd_norm", "macd_hist_norm",
         "atr_pct", "bb_width_norm", "candle_body_pct",
-        "candle_upper_pct", "candle_lower_pct"
+        "candle_upper_pct", "candle_lower_pct",
+        "price_vs_sma5", "volatility_10", "volatility_20"
     ]
     for col in cols_to_clip:
         df[col] = df[col].astype(float).clip(lower=-0.5, upper=0.5)
@@ -404,6 +418,7 @@ INDICATOR_COLS = [
     "price_momentum_5", "price_momentum_10", "price_momentum_20",
     "volume_momentum_5", "macd_norm", "macd_hist_norm", "atr_pct", "bb_width_norm",
     "candle_body_pct", "candle_upper_pct", "candle_lower_pct",
+    "price_vs_sma5", "volatility_10", "volatility_20",
     "direction_5d", "direction_10d", "return_5d",
 ]
 

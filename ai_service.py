@@ -372,10 +372,16 @@ def market_overview():
     HAVING COUNT(*) >= 3
     ORDER BY avg_ai_score DESC
     """
+    regime_sql = """
+    SELECT price_momentum_20 AS vnindex_momentum_20, rsi_14 AS vnindex_rsi
+    FROM technical_indicators
+    WHERE symbol = 'VNINDEX' AND trading_date = :predict_date
+    """
 
     market_df = _read_sql(market_sql)
     signal_distribution = _clean_df(_read_sql(signal_sql, {"predict_date": predict_date}))
     industries = _clean_df(_read_sql(industry_sql, {"predict_date": predict_date}))
+    regime_df = _read_sql(regime_sql, {"predict_date": predict_date})
 
     market_breadth = {}
     if not market_df.empty:
@@ -389,9 +395,22 @@ def market_overview():
             "down_ratio": float(row["down_count"]) / total
         }
 
+    market_regime = {"momentum": 0.0, "rsi": 50.0, "shield_active": False}
+    if not regime_df.empty:
+        row = regime_df.iloc[0]
+        momentum = float(row["vnindex_momentum_20"]) if pd.notna(row["vnindex_momentum_20"]) else 0.0
+        rsi = float(row["vnindex_rsi"]) if pd.notna(row["vnindex_rsi"]) else 50.0
+        shield_active = (momentum < -0.02) or (rsi < 45)
+        market_regime = {
+            "momentum": momentum,
+            "rsi": rsi,
+            "shield_active": bool(shield_active)
+        }
+
     return {
         "predict_date": str(predict_date),
         "market_breadth": market_breadth,
+        "market_regime": market_regime,
         "signal_distribution": signal_distribution.to_dict(orient="records"),
         "top_industries": industries.head(10).to_dict(orient="records"),
         "bottom_industries": industries.sort_values("avg_ai_score", ascending=True).head(10).to_dict(orient="records"),

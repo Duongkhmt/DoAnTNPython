@@ -67,6 +67,13 @@ def assign_ranker_signals(frame: pd.DataFrame) -> pd.DataFrame:
     ranked.loc[(ranked["score_rank_pct"] > 0.10) & (ranked["score_rank_pct"] <= 0.30), "ai_signal"] = "TOP"
     ranked.loc[ranked["score_rank_pct"] >= 0.90, "ai_signal"] = "WEAK_STRONG"
     ranked.loc[(ranked["score_rank_pct"] < 0.90) & (ranked["score_rank_pct"] >= 0.70), "ai_signal"] = "WEAK"
+
+    # Market Regime Filter: Downgrade BUY signals if VNINDEX is in Bearish/High-Risk state
+    if "vnindex_momentum_20" in ranked.columns and "vnindex_rsi" in ranked.columns:
+        bearish_condition = (ranked["vnindex_momentum_20"] < -0.02) | (ranked["vnindex_rsi"] < 45)
+        to_downgrade = bearish_condition & ranked["ai_signal"].isin(["TOP_STRONG", "TOP"])
+        ranked.loc[to_downgrade, "ai_signal"] = "NEUTRAL"
+
     return ranked
 
 
@@ -275,6 +282,15 @@ def build_report(predictions: pd.DataFrame, skipped: pd.DataFrame, engine: Any) 
     top_sell = predictions[predictions["ai_signal"] == "WEAK_STRONG"].sort_values("ai_score", ascending=True).head(10)
     changes = fetch_previous_signal_changes(engine, latest_date) if latest_date else pd.DataFrame()
 
+    is_bearish = False
+    vnindex_mom20 = 0.0
+    vnindex_rsi = 0.0
+    if not predictions.empty and "vnindex_momentum_20" in predictions.columns and "vnindex_rsi" in predictions.columns:
+        vnindex_mom20 = float(predictions["vnindex_momentum_20"].iloc[0])
+        vnindex_rsi = float(predictions["vnindex_rsi"].iloc[0])
+        if vnindex_mom20 < -0.02 or vnindex_rsi < 45:
+            is_bearish = True
+
     return {
         "predict_date": str(latest_date) if latest_date else None,
         "source_rows": int(len(predictions) + len(skipped)),
@@ -284,6 +300,9 @@ def build_report(predictions: pd.DataFrame, skipped: pd.DataFrame, engine: Any) 
         "top_buy_strong": top_buy[["symbol", "ai_score", "exchange", "industry"]].to_dict(orient="records"),
         "top_sell_strong": top_sell[["symbol", "ai_score", "exchange", "industry"]].to_dict(orient="records"),
         "mua_to_ban_changes": changes.to_dict(orient="records"),
+        "is_bearish": is_bearish,
+        "vnindex_mom20": vnindex_mom20,
+        "vnindex_rsi": vnindex_rsi,
     }
 
 
@@ -295,6 +314,15 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"So dong source: {report['source_rows']}")
     print(f"Tong ma du doan: {report['total_symbols']}")
     print(f"So ma bi bo qua do thieu feature: {report['skipped_symbols']}")
+    
+    if report.get("is_bearish"):
+        print("\n" + "!" * 72)
+        print("  CANH BAO: THI TRUONG DANG TRONG GIAI DOAN RUI RO CAO / BEARISH")
+        print(f"  -> VNINDEX Momentum 20: {report.get('vnindex_mom20', 0):.4f} (< -0.02)")
+        print(f"  -> VNINDEX RSI:         {report.get('vnindex_rsi', 0):.2f} (< 45)")
+        print("  -> He thong da tu dong ha cac tin hieu MUA (TOP/TOP_STRONG) xuong NEUTRAL.")
+        print("!" * 72)
+
     print("\nPhan bo tin hieu:")
     for signal, count in sorted(report["signal_counts"].items()):
         print(f"  {signal:12s}: {count}")
@@ -333,8 +361,8 @@ def run_daily_prediction(
     engine = get_db_engine()
     feature_config = load_feature_config(features_path)
     model_type = feature_config.get("model_type")
-    if model_type != "lightgbm_ranker":
-        raise ValueError(f"Chi ho tro model_type='lightgbm_ranker', nhan duoc: {model_type}")
+    if model_type not in ("lightgbm_ranker", "lightgbm_regressor"):
+        raise ValueError(f"Chi ho tro model_type='lightgbm_ranker' hoac 'lightgbm_regressor', nhan duoc: {model_type}")
     model = load_model(model_path)
     features = feature_config["features"]
     source = fetch_indicator_frame(engine, target_date)
