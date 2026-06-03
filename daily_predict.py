@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import pickle
+import sys
 from collections import Counter
 from datetime import timedelta
 from pathlib import Path
@@ -12,6 +13,10 @@ from sqlalchemy import text
 
 from create_ml_table import create_predictions_table
 from timescale_utils import DatabaseManager
+
+# Configure standard output to use UTF-8 to prevent encoding errors on Windows terminal
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 DEFAULT_MODEL_PATH = "lgbm_alpha_5d_ranker.txt"
