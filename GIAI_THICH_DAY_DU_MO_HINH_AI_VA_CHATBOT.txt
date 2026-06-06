@@ -1079,3 +1079,93 @@ Nguoi dung chi nen tin ket qua khi:
 
 Neu thieu cac thong tin tren, ket qua van co the dung, nhung khong nen xem la du co so de ra quyet
 dinh quan trong.
+
+
+=====================================================================================
+35. KIẾN TRÚC VÀ CƠ CHẾ HOẠT ĐỘNG CỦA CHATBOT AGENT TỰ ĐỘNG
+=====================================================================================
+
+Trong hệ thống này, Chatbot không đơn thuần là một mô hình trả lời tự động thông thường (như GPT hay Claude cơ bản), mà được thiết kế dưới dạng một **AI Agent (Tác tử thông minh)** sử dụng thư viện **LangChain** và cơ chế **ReAct (Reasoning and Acting)**.
+
+35.1. Sơ đồ kiến trúc tổng quát của Chatbot Agent:
+
+    [Người dùng đặt câu hỏi]
+               │
+               ▼
+    ┌────────────────────────────────────────────────────────┐
+    │              Chatbot Agent (LangChain)                 │
+    │  - LLM chính: Claude 4.5 / Sonnet (Qua API ai-box.vn)   │
+    │  - Bộ nhớ: ConversationBufferMemory (Nhớ lịch sử chat)  │
+    └──────────────────────────┬─────────────────────────────┘
+                               │
+                Tự động suy luận & Chọn Tool
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+     [Công cụ phân tích đơn lẻ]     [Công cụ phân tích gộp]
+     - Get_Stock_Price_And_Indicators - Get_Full_Stock_Analysis_Data
+     - Get_AI_Prediction_Score         (Lấy đồng thời: Giá, Điểm AI,
+     - Get_Top_K_Stocks                 Wyckoff/VSA, So sánh ngành)
+     - Get_Wyckoff_And_VSA_Status
+     - Get_Market_Risk_Warnings
+     - Get_Sector_Relative_Strength
+               │                               │
+               └───────────────┬───────────────┘
+                               │
+                     Truy vấn Database & AI
+                               │
+                               ▼
+     ┌───────────────────────────────────────────────────────┐
+     │      Cơ sở dữ liệu (TimescaleDB / MongoDB)           │
+     │      - Bảng: ml_predictions (Tín hiệu AI Stacking)    │
+     │      - Bảng: technical_indicators (Chỉ báo kỹ thuật)   │
+     │      - Bảng: wyckoff_analysis (Pha tích lũy Wyckoff)   │
+     └─────────────────────────┬─────────────────────────────┘
+                               │
+                        Trả kết quả thô
+                               │
+                               ▼
+     ┌───────────────────────────────────────────────────────┐
+     │       Agent lập luận & Trả lời người dùng             │
+     │ (Kết hợp dữ liệu số thực tế + Văn phong tài chính)     │
+     └───────────────────────────────────────────────────────┘
+
+35.2. Cơ chế suy luận ReAct (Reasoning + Acting)
+ReAct là cơ chế giúp mô hình ngôn ngữ lớn (LLM) thực hiện các bước lặp: Suy nghĩ (Thought) -> Chọn hành động/gọi công cụ (Action) -> Quan sát kết quả (Observation) -> Đưa ra câu trả lời cuối cùng (Final Answer).
+*   **Thought (Suy nghĩ)**: Agent phân tích câu hỏi của người dùng để xác định mục đích (Intent). Ví dụ: Người dùng hỏi "HPG thế nào?" -> Agent nhận định cần phân tích đa chiều cho mã HPG.
+*   **Action (Hành động)**: Agent quyết định kích hoạt công cụ `Get_Full_Stock_Analysis_Data` với đầu vào là "HPG".
+*   **Observation (Quan sát)**: Công cụ này truy vấn SQL vào cơ sở dữ liệu TimescaleDB và trả về một chuỗi JSON chứa đầy đủ thông tin: giá đóng cửa, chỉ số RSI/SMA20, điểm số dự báo AI Stacking, phân hạng tín hiệu (TOP_STRONG/NEUTRAL...), pha Wyckoff hiện tại (Phase C, Spring...), và so sánh hiệu suất với các mã cùng ngành thép.
+*   **Thought**: Agent đọc hiểu dữ liệu JSON này, lập luận tính hợp lý và xâu chuỗi thông tin.
+*   **Final Answer (Kết luận)**: Agent chuyển các con số khô khan thành một bài phân tích chuyên nghiệp bằng tiếng Việt và gửi lại cho người dùng.
+
+=====================================================================================
+36. CHI TIẾT CÁC CÔNG CỤ (TOOLS) MÀ AGENT ĐƯỢC TRANG BỊ
+=====================================================================================
+
+Để Agent không bị "bịa đặt" (hallucination) dữ liệu tài chính, Agent được trang bị bộ 7 công cụ lập trình sẵn (`chatbot_tools.py`):
+
+1.  `Get_Stock_Price_And_Indicators`:
+    *   **Nhiệm vụ**: Lấy giá đóng cửa gần nhất, phần trăm tăng giảm, khối lượng giao dịch và các chỉ báo kỹ thuật cơ bản (RSI 14, SMA 20) của mã.
+2.  `Get_AI_Prediction_Score`:
+    *   **Nhiệm vụ**: Truy vấn bảng `ml_predictions` để lấy điểm số dự báo `ai_score` (tính từ mô hình Stacking Ensemble) và phân hạng tín hiệu (TOP_STRONG, TOP, NEUTRAL, WEAK, WEAK_STRONG).
+3.  `Get_Top_K_Stocks`:
+    *   **Nhiệm vụ**: Lọc ra top K cổ phiếu có điểm số AI cao nhất thị trường trong ngày giao dịch gần nhất, giúp người dùng trả lời câu hỏi tìm kiếm cơ hội đầu tư.
+4.  `Get_Wyckoff_And_VSA_Status`:
+    *   **Nhiệm vụ**: Đọc kết quả phân tích Wyckoff từ bảng `wyckoff_analysis`. Trả về pha hiện tại (Phase A-E), kịch bản (Schematic 1/2), vùng hỗ trợ/kháng cự, và đặc biệt là **Điều kiện chuyển vị thế giao dịch chi tiết** (ví dụ: cần khối lượng bứt phá vượt trung bình 20 phiên ra sao để kích hoạt điểm mua).
+5.  `Get_Market_Risk_Warnings`:
+    *   **Nhiệm vụ**: Cảnh báo các cổ phiếu đang nằm trong vùng rủi ro cao, bị bán tháo hoặc gãy nền xu hướng.
+6.  `Get_Sector_Relative_Strength_Comparison`:
+    *   **Nhiệm vụ**: So sánh hiệu suất tăng giảm giá của cổ phiếu mục tiêu so với các mã đối thủ trong cùng ngành (ví dụ: so sánh HPG với HSG, NKG trong ngành Tài nguyên Cơ bản) trong 5 phiên và 20 phiên gần nhất để tìm ra mã dẫn dắt dòng tiền (Leader).
+7.  `Get_Full_Stock_Analysis_Data` (Công cụ gộp tối ưu):
+    *   **Nhiệm vụ**: Gộp toàn bộ dữ liệu của các công cụ 1, 2, 4, 6 thành một cuộc gọi API duy nhất. Đây là cải tiến kỹ thuật quan trọng giúp giảm độ trễ (latency) của chatbot từ 10 giây xuống còn dưới 2 giây, giúp trải nghiệm trò chuyện mượt mà hơn rất nhiều.
+
+=====================================================================================
+37. NĂNG LỰC CỦA CHATBOT AGENT TRONG THỰC TẾ
+=====================================================================================
+
+1.  **Nhớ ngữ cảnh hội thoại (Contextual Memory)**: 
+    Nhờ `ConversationBufferMemory`, nếu người dùng hỏi "Đánh giá giúp tôi mã SSI" và sau đó hỏi tiếp "Thế còn VND thì sao?", chatbot sẽ tự hiểu người dùng muốn thực hiện cùng một tác vụ đánh giá đối với mã VND và so sánh nó với SSI ở câu hỏi trước đó.
+2.  **Khả năng tự xử lý lỗi (Robustness)**:
+    Được thiết lập thuộc tính `handle_parsing_errors=True`. Nếu trong quá trình lập luận, LLM sinh ra định dạng JSON gọi tool bị lỗi cú pháp, Agent sẽ tự bắt lỗi và yêu cầu LLM sửa lại định dạng thay vì làm sập ứng dụng Backend.
+3.  **Tính minh bạch**:
+    Chatbot luôn hiển thị rõ ràng cơ sở lập luận: Đâu là dữ liệu thô từ sàn giao dịch, đâu là điểm đánh giá của mô hình toán Stacking Ensemble, và đâu là chỉ báo Wyckoff truyền thống, giúp nhà đầu tư có cái nhìn toàn diện trước khi ra quyết định.
