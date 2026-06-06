@@ -898,10 +898,7 @@ def main():
         failed_symbols = orchestrator.run_parallel(symbols)
         
         # 2. Level 2 Retry
-        # Lược bỏ bước Retry vì các mã lỗi (khoảng 435 mã) hầu hết do thiếu thanh khoản hoặc API nguồn không có dữ liệu.
-        # Giữ lại comment code để trình bày cơ chế Retry trong báo cáo/demo Đồ án.
-        # final_failed = orchestrator.retry_failed(failed_symbols, max_rounds=1)
-        final_failed = failed_symbols
+        final_failed = orchestrator.retry_failed(failed_symbols, max_rounds=1)
         
         # 3. Completeness Check
         report, incomplete = orchestrator.check_data_completeness(symbols)

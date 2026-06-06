@@ -7,7 +7,7 @@ from tqdm import tqdm
 from daily_predict import (
     get_db_engine,
     load_model,
-    load_features,
+    load_feature_config,
     score_frame,
     upsert_predictions,
     DEFAULT_MODEL_PATH,
@@ -73,7 +73,8 @@ def main():
 
     engine = get_db_engine()
     model = load_model(DEFAULT_MODEL_PATH)
-    features = load_features(DEFAULT_FEATURES_PATH)
+    feature_config = load_feature_config(DEFAULT_FEATURES_PATH)
+    features = feature_config["features"]
 
     print(f"Checking missing prediction dates from {args.start_date}...")
     missing_dates = get_missing_dates(engine, args.start_date)

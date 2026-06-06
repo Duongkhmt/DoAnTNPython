@@ -1,0 +1,270 @@
+================================================================================
+TÀI LIỆU GIẢI THÍCH CHI TIẾT VỀ MÔ HÌNH DỰ ĐOÁN AI TRONG DỰ ÁN CHỨNG KHOÁN
+         STACKING ENSEMBLE REGRESSOR (LIGHTGBM & XGBOOST)
+================================================================================
+
+Tài liệu này được biên soạn dành cho người mới bắt đầu hoặc hội đồng chấm đồ án
+để hiểu trọn vẹn, chặt chẽ về mặt lý thuyết, cấu trúc toán học, cách thức
+vận hành, tính toán và cách đánh giá hiệu quả của mô hình AI Stacking Ensemble
+trong dự án này.
+
+--------------------------------------------------------------------------------
+MỤC LỤC
+--------------------------------------------------------------------------------
+1. TỔNG QUAN: MÔ HÌNH NÀY DÙNG ĐỂ LÀM GÌ?
+2. TARGET VARIABLE (MỤC TIÊU DỰ BÁO) LÀ GÌ VÀ TẠI SAO LẠI CHỌN NÓ?
+3. ĐẦU VÀO CỦA MÔ HÌNH: 10 ĐẶC TRƯNG CỐT LÕI (FEATURES)
+4. KIẾN TRÚC MÔ HÌNH STACKING ENSEMBLE (SỰ KẾT HỢP 2 TẦNG)
+5. QUY TRÌNH HUẤN LUYỆN (TRAINING PROCESS) VÀ PHÂN CHIA DỮ LIỆU
+6. QUY TRÌNH DỰ BÁO HÀNG NGÀY (INFERENCE PIPELINE) VÀ BỘ LỌC RỦI RO
+7. LÀM SAO ĐỂ ĐÁNH GIÁ MÔ HÌNH CÓ HIỆU QUẢ VÀ ĐÁNG TIN CẬY?
+
+================================================================================
+1. TỔNG QUAN: MÔ HÌNH NÀY DÙNG ĐỂ LÀM GÌ?
+================================================================================
+Trong thị trường chứng khoán, việc dự báo chính xác giá cổ phiếu ngày mai tăng hay 
+giảm bao nhiêu là cực kỳ khó và có độ nhiễu (noise) lớn do tác động của tin tức, 
+tâm lý đám đông và xu hướng chung của thị trường (Market Beta).
+
+Mô hình AI trong dự án này không đi dự báo giá trị tuyệt đối của cổ phiếu (ví dụ: 
+không dự báo ngày mai FPT có giá 135.200đ hay không). Thay vào đó, mô hình thực hiện 
+bài toán **Xếp hạng cổ phiếu (Stock Ranking)**. 
+
+Mục tiêu cốt lõi của mô hình là:
+  "Vào cuối mỗi ngày giao dịch, mô hình sẽ chấm điểm và xếp hạng toàn bộ cổ phiếu 
+   trên sàn HOSE và HNX xem cổ phiếu nào có khả năng tăng giá vượt trội nhất 
+   (Outperform) so với thị trường chung trong 5 phiên giao dịch tiếp theo."
+
+================================================================================
+2. TARGET VARIABLE (MỤC TIÊU DỰ BÁO): alpha_rank_pct
+================================================================================
+Để thực hiện bài toán xếp hạng, mô hình sử dụng mục tiêu dự báo là chỉ số 
+`alpha_rank_pct` (Xếp hạng phần trăm tỷ suất sinh lợi vượt trội).
+
+Công thức tính toán qua 3 bước như sau:
+
+Bước 2.1: Tính tỷ suất lợi nhuận (Return) trong 5 phiên tiếp theo của cổ phiếu (s)
+          Return_5d(s) = (Close_t+5 - Close_t) / Close_t
+
+Bước 2.2: Tính tỷ suất lợi nhuận vượt trội (Alpha) so với chỉ số VNINDEX
+          Alpha_5d(s) = Return_5d(s) - Return_5d(VNINDEX)
+          -> Alpha loại bỏ đi biến động chung của thị trường. Nếu thị trường giảm 10%
+             nhưng cổ phiếu chỉ giảm 2%, cổ phiếu đó vẫn có Alpha dương (+8%).
+
+Bước 2.3: Chuẩn hóa xếp hạng phần trăm (Percentile Rank) trong ngày giao dịch
+          alpha_rank_pct(s) = Rank(Alpha_5d(s)) trong toàn bộ vũ trụ cổ phiếu ngày hôm đó.
+          -> Giá trị của alpha_rank_pct nằm trong khoảng (0, 1]:
+             - Gần 1.0: Cổ phiếu tăng mạnh nhất thị trường (Top Outperform).
+             - Gần 0.0: Cổ phiếu giảm mạnh nhất hoặc yếu nhất thị trường (Underperform).
+
+Tại sao lại dự báo alpha_rank_pct?
+  - Triệt tiêu biến động thị trường chung (Market Beta Neutral): Giúp mô hình chọn 
+    được cổ phiếu tốt nhất kể cả khi thị trường đang Uptrend hay Downtrend.
+  - Phù hợp với thuật toán học máy: Dữ liệu dao động ổn định trong khoảng (0, 1] 
+    giúp mô hình hội tụ nhanh hơn và giảm thiểu ảnh hưởng của các điểm dị biệt (outliers).
+
+================================================================================
+3. ĐẦU VÀO CỦA MÔ HÌNH: 10 ĐẶC TRƯNG CỐT LÕI (FEATURES)
+================================================================================
+Mô hình sử dụng 10 chỉ báo kỹ thuật cốt lõi (được lấy cảm hứng từ bộ đặc trưng định
+lượng Alpha158) biểu thị cho Động lượng giá, Khối lượng, Dòng tiền và Biến động:
+
+1.  price_vs_sma5: Khoảng cách tương đối giữa giá đóng cửa hiện tại và đường trung
+    bình động 5 ngày. Biểu thị xu hướng tăng/giảm ngắn hạn.
+2.  price_vs_sma20: Khoảng cách tương đối so với đường trung bình động 20 ngày.
+    Biểu thị xu hướng trung hạn.
+3.  rel_momentum_5: Sức mạnh giá tương đối 5 ngày của cổ phiếu so với sức mạnh 
+    của VNINDEX. (Cổ phiếu khỏe hơn hay yếu hơn thị trường chung).
+4.  rel_momentum_20: Sức mạnh giá tương đối 20 ngày của cổ phiếu so với VNINDEX.
+5.  rsi_14: Chỉ số sức mạnh tương đối (RSI 14 ngày) để đo lường trạng thái quá 
+    mua hoặc quá bán của cổ phiếu.
+6.  rsi_vs_vnindex: Sự chênh lệch giữa RSI của cổ phiếu và RSI của VNINDEX.
+7.  volume_ratio: Tỷ lệ khối lượng giao dịch hiện tại so với trung bình 20 ngày.
+    Dùng để phát hiện các phiên bùng nổ thanh khoán (Breakout).
+8.  bb_width_norm: Độ rộng dải Bollinger Bands đã chuẩn hóa. Đo lường mức độ 
+    biến động giá (Volatility) của cổ phiếu.
+9.  cmf_20: Chỉ báo dòng tiền Chaikin Money Flow. Cho biết dòng tiền của các nhà
+    đầu tư lớn đang gom hàng (tích lũy) hay xả hàng (phân phối).
+10. atr_pct: Chỉ báo biên độ dao động trung bình thực tế (ATR) tính theo phần trăm.
+    Đại diện cho mức độ rủi ro biến động giá của mã cổ phiếu.
+
+================================================================================
+4. KIẾN TRÚC MÔ HÌNH STACKING ENSEMBLE (SỰ KẾT HỢP 2 TẦNG)
+================================================================================
+Thay vì chỉ sử dụng một mô hình duy nhất, hệ thống kết hợp sức mạnh của nhiều thuật
+toán thông qua kỹ thuật **Stacking (Xếp chồng mô hình)** hoạt động theo 2 tầng:
+
+                            ┌───────────────────────┐
+                            │    10 Đầu vào (X)     │
+                            └───────────┬───────────┘
+                                        │
+                       ┌────────────────┴────────────────┐
+                       ▼                                 ▼
+           ┌───────────────────────┐         ┌───────────────────────┐
+           │   LightGBM Regressor  │         │   XGBoost Regressor   │  (TẦNG 1: Base Learners)
+           └───────────┬───────────┘         └───────────┬───────────┘
+                       │                                 │
+                       └────────────────┬────────────────┘
+                                        ▼ (Dự đoán tầng 1)
+                            ┌───────────────────────┐
+                            │   Ridge Regression    │                   (TẦNG 2: Meta-Learner)
+                            └───────────┬───────────┘
+                                        ▼
+                            ┌───────────────────────┐
+                            │    Điểm số ai_score   │
+                            └───────────────────────┘
+
+TẦNG 1: CÁC MÔ HÌNH CƠ SỞ (BASE LEARNERS)
+----------------------------------------
+*   **LightGBM Regressor (Light Gradient Boosting Machine)**:
+    - Thuật toán Boosting dựa trên cây quyết định phát triển theo chiều dọc (leaf-wise).
+    - Ưu điểm: Tốc độ huấn luyện cực nhanh, sử dụng ít bộ nhớ, học rất tốt các mối
+      quan hệ phi tuyến tính phức tạp giữa các chỉ báo kỹ thuật.
+*   **XGBoost Regressor (eXtreme Gradient Boosting)**:
+    - Thuật toán Boosting phát triển cây theo chiều ngang (level-wise).
+    - Ưu điểm: Kiểm soát Overfitting cực kỳ tốt thông qua cơ chế phạt (L1/L2 Regularization),
+      đưa ra kết quả dự đoán có tính ổn định cao.
+
+TẦNG 2: MÔ HÌNH TỔNG HỢP (META-LEARNER)
+---------------------------------------
+*   **Ridge Regression (Hồi quy tuyến tính có điều chuẩn L2)**:
+    - Nhận đầu vào là kết quả dự báo của LightGBM và XGBoost trên tập Validation.
+    - Tại sao dùng Ridge? Dự đoán của LightGBM và XGBoost có độ tương quan rất cao
+      (đa cộng tuyến - multicollinearity). Nếu dùng hồi quy tuyến tính thông thường
+      sẽ gây nhiễu và mất ổn định. Ridge Regression với tham số phạt alpha (L2) 
+      giúp triệt tiêu hiện tượng đa cộng tuyến, tối ưu hóa trọng số kết hợp một 
+      cách khoa học thay vì chỉ lấy trung bình cộng đơn giản.
+    - Kết quả huấn luyện cho ra trọng số thực tế: `ai_score = w1 * Pred_LGB + w2 * Pred_XGB`
+
+================================================================================
+5. QUY TRÌNH HUẤN LUYỆN (TRAINING PROCESS) VÀ PHÂN CHIA DỮ LIỆU
+================================================================================
+*   **Tập dữ liệu**: Huấn luyện trên hơn 340.000 bản ghi lịch sử của các cổ phiếu 
+    sàn HOSE và HNX có thanh khoản tốt (khối lượng trung bình 20 phiên > 100.000 cổ phiếu)
+    giai đoạn từ năm 2021 đến nay.
+*   **Nguyên tắc chia dữ liệu theo thời gian (Time-series Split)**:
+    - Dữ liệu tài chính **tuyệt đối không** được chia ngẫu nhiên (như K-Fold thông
+      thường) vì sẽ gây ra hiện tượng rò rỉ dữ liệu tương lai (Data Leakage / Look-ahead bias).
+    - Dữ liệu được sắp xếp theo trình tự thời gian tăng dần của cột `trading_date`.
+    - Phân chia theo tỷ lệ **80% dữ liệu đầu (Train Set)** và **20% dữ liệu sau (Validation Set)**:
+      - *Train Set*: Dùng để dạy hai mô hình cơ sở LightGBM và XGBoost cách nhận biết đặc trưng.
+      - *Validation Set*: Hai mô hình cơ sở chạy dự đoán trên tập này. Kết quả dự đoán
+        của chúng được ghép lại để huấn luyện mô hình Meta-Learner (Ridge). Điều này
+        đảm bảo mô hình Meta-Learner không bị học vẹt (overfitting) trên dữ liệu
+        đã dùng để huấn luyện tầng 1.
+
+================================================================================
+6. QUY TRÌNH DỰ BÁO HÀNG NGÀY (INFERENCE PIPELINE) VÀ BỘ LỌC RỦI RO
+================================================================================
+Mỗi ngày sau phiên giao dịch, script `daily_predict.py` thực hiện:
+
+Bước 6.1: Nạp 10 đặc trưng của ngày hôm nay từ bảng `technical_indicators`.
+Bước 6.2: Đưa qua mô hình Stacking để tính điểm số `ai_score` cho từng cổ phiếu.
+Bước 6.3: Xếp hạng toàn bộ thị trường theo `ai_score` từ cao xuống thấp và phân nhãn:
+          - TOP_STRONG   : 10% cổ phiếu có điểm cao nhất (Khuyến nghị mua mạnh mẽ).
+          - TOP          : 10% - 30% tiếp theo (Khuyến nghị mua tích lũy).
+          - NEUTRAL      : 30% - 70% tiếp theo (Theo dõi, trung tính).
+          - WEAK         : 70% - 90% tiếp theo (Yếu, khuyến nghị tránh).
+          - WEAK_STRONG  : 10% cổ phiếu có điểm thấp nhất (Khuyến nghị bán/tránh xa).
+
+BỘ LỌC RỦI RO THỊ TRƯỜNG (MARKET REGIME FILTER) - CHỐT CHẶN PHÒNG VỆ
+------------------------------------------------------------------
+Hệ thống tích hợp một bộ lọc xu hướng thị trường chung:
+  - Điều kiện kích hoạt rủi ro: VNINDEX có xu hướng giảm mạnh trung hạn
+    (`vnindex_momentum_20 < -0.02` - giảm hơn 2% trong 20 phiên) HOẶC thị trường 
+    quá yếu (`vnindex_rsi < 45`).
+  - Hành động: Tự động hạ toàn bộ các tín hiệu mua `TOP_STRONG` và `TOP` xuống `NEUTRAL`.
+  - Mục đích: Không khuyến nghị mua bất cứ cổ phiếu nào khi thị trường chung đang
+    gặp rủi ro hệ thống lớn (Bear Market), bảo vệ vốn của nhà đầu tư.
+
+================================================================================
+7. LÀM SAO ĐỂ ĐÁNH GIÁ MÔ HÌNH CÓ HIỆU QUẢ VÀ ĐÁNG TIN CẬY?
+================================================================================
+Người dùng hoặc Hội đồng chấm thi có thể dựa vào các tiêu chí thực tế sau để xác
+định mô hình hoạt động tốt hay không:
+
+1.  Trọng số Meta-Learner (Weights):
+    Trong log huấn luyện hiển thị trọng số của Ridge Regression (Ví dụ: `LGBM=0.4851, XGB=0.5214`).
+    Nếu cả hai trọng số đều dương và xấp xỉ nhau, chứng tỏ Stacking đã kết hợp hài hòa
+    và tận dụng được thế mạnh của cả hai thuật toán thay vì bị thiên lệch về một phía.
+
+2.  Tính phân tách của các nhóm tín hiệu (Monotonicity Test):
+    - Đây là thước đo quan trọng nhất trong bài toán Ranking.
+    - Bạn hãy theo dõi hiệu suất thực tế của các nhóm tín hiệu sau 5 phiên:
+      Lợi nhuận thực tế: TOP_STRONG > TOP > NEUTRAL > WEAK > WEAK_STRONG.
+      Nếu nhóm TOP_STRONG có tỷ suất sinh lời trung bình cao vượt trội so với VNINDEX
+      và nhóm WEAK_STRONG có tỷ suất sinh lời thấp nhất (hoặc âm nặng nhất), chứng 
+      tỏ mô hình có khả năng phân tách cổ phiếu tốt/xấu cực kỳ chính xác.
+
+3.  Tỷ lệ thắng (Win Rate) của tín hiệu TOP_STRONG:
+    - Theo dõi tỷ lệ phần trăm các khuyến nghị TOP_STRONG có lợi nhuận dương sau T+5.
+    - Trong môi trường kiểm thử lịch sử (Backtest), nếu tỷ lệ thắng đạt trên 55% - 60%
+      đối với bài toán T+5 ngắn hạn, mô hình được đánh giá là rất thành công và có
+      lợi thế cạnh tranh cao so với giao dịch ngẫu nhiên (chỉ đạt ~48-50%).
+
+4.  Khả năng phòng vệ trong Downtrend:
+    - Kiểm tra xem trong các giai đoạn thị trường sụp đổ, bộ lọc Market Regime Filter 
+      có hoạt động chính xác không (tín hiệu TOP_STRONG biến mất, chuyển toàn bộ 
+      vũ trụ sang NEUTRAL). Việc giữ tiền không giao dịch trong downtrend chính là 
+      chìa khóa giúp nâng cao hiệu suất đầu tư tổng thể.
+
+================================================================================
+8. CÁC CHỈ SỐ ĐÁNH GIÁ CHUYÊN SÂU TRONG ĐỊNH LƯỢNG CHỨNG KHOÁN (QUANTITATIVE METRICS)
+================================================================================
+Để đánh giá mô hình xếp hạng chứng khoán một cách học thuật và thực chiến theo tiêu 
+chuẩn của các quỹ đầu tư định lượng (Quant Funds), dự án sử dụng các chỉ số đo lường 
+chuyên sâu sau:
+
+8.1. Rank IC (Rank Information Coefficient)
+-------------------------------------------
+*   Định nghĩa: Là hệ số tương quan hạng Spearman (Spearman's Rank Correlation) giữa 
+    điểm số xếp hạng do AI dự báo (ai_score) và xếp hạng tỷ suất sinh lời vượt trội 
+    thực tế (alpha_5d) của các cổ phiếu trong cùng một ngày giao dịch.
+*   Công thức: Rank IC = Correlation(Rank(ai_score), Rank(alpha_5d))
+*   Ý nghĩa: Đo lường khả năng "sắp xếp thứ tự" chính xác của mô hình. Chỉ số này 
+    nằm trong khoảng [-1, 1]. Trong đầu tư định lượng, do thị trường chứng khoán 
+    rất nhiễu, Rank IC trung bình đạt từ 0.02 đến 0.06 (2% - 6%) đã được coi là 
+    mô hình vô cùng xuất sắc và có lợi thế sinh lời rất lớn.
+
+8.2. Information Ratio của Rank IC (IR of Rank IC)
+--------------------------------------------------
+*   Định nghĩa: Tỷ số thông tin đánh giá tính nhất quán và độ ổn định của Rank IC 
+    qua các chu kỳ kiểm thử.
+*   Công thức: IR = Mean(Rank IC) / Std(Rank IC)
+    (Trung bình Rank IC chia cho Độ lệch chuẩn của Rank IC qua các phiên).
+*   Ý nghĩa: Một mô hình có Rank IC trung bình tốt nhưng biến động quá mạnh (ngày 
+    đúng nhiều, ngày sai nhiều) sẽ có IR thấp. Nếu IR > 0.5, mô hình hoạt động 
+    cực kỳ ổn định, giảm thiểu rủi ro biến động hiệu suất qua các giai đoạn 
+    thị trường khác nhau.
+
+8.3. Top-k avg_alpha (Lợi nhuận vượt trội trung bình của nhóm Top-k)
+-------------------------------------------------------------------
+*   Định nghĩa: Tỷ suất sinh lời vượt trội (Alpha) thực tế trung bình sau T+5 
+    của nhóm k cổ phiếu được AI xếp hạng cao nhất ngày hôm đó (ví dụ k=5 hoặc k=10).
+*   Ý nghĩa: Chỉ số này chứng minh trực quan hiệu suất vượt trội của mô mục do 
+    AI chọn so với chỉ số VNINDEX. Giá trị này càng dương lớn, chứng tỏ việc 
+    đầu tư theo khuyến nghị của mô hình càng hiệu quả.
+
+8.4. Top-k alpha_win_rate (Tỷ lệ thắng theo Alpha của nhóm Top-k)
+----------------------------------------------------------------
+*   Định nghĩa: Tỷ lệ phần trăm các cổ phiếu nằm trong nhóm k cổ phiếu hàng đầu 
+    có lợi nhuận thực tế tốt hơn chỉ số VNINDEX (tức là có alpha_5d > 0).
+*   Ý nghĩa: Đo lường xác suất chiến thắng thị trường chung của danh mục khuyến nghị. 
+    Chỉ số này vượt trên 50% chứng minh mô hình AI mang lại lợi thế thống kê 
+    thực sự vượt trội so với chọn ngẫu nhiên.
+
+8.5. Top-k avg_stock_return (Lợi nhuận tuyệt đối trung bình của nhóm Top-k)
+---------------------------------------------------------------------------
+*   Định nghĩa: Tỷ suất sinh lời thực tế tuyệt đối (lợi nhuận thực tế chưa trừ đi 
+    biến động VNINDEX) sau 5 phiên của nhóm k cổ phiếu đứng đầu.
+*   Ý nghĩa: Đo lường số tiền/lợi nhuận danh nghĩa thực tế nhà đầu tư kiếm được 
+    khi nắm giữ danh mục khuyến nghị.
+
+8.6. Top-k stock_win_rate (Tỷ lệ thắng tuyệt đối của nhóm Top-k)
+----------------------------------------------------------------
+*   Định nghĩa: Tỷ lệ phần trăm các cổ phiếu nằm trong nhóm k cổ phiếu hàng đầu 
+    có lợi nhuận tuyệt đối dương sau T+5 (mua là có lãi).
+*   Ý nghĩa: Đây là chỉ số trực quan nhất mà các nhà đầu tư cá nhân quan tâm, 
+    đo lường xác suất có lãi thực tế của tài khoản giao dịch.
+================================================================================
+

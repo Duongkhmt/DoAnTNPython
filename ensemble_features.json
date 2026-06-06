@@ -1,0 +1,16 @@
+{
+  "model_type": "stacking_ensemble",
+  "target": "alpha_rank_pct",
+  "features": [
+    "price_vs_sma5",
+    "price_vs_sma20",
+    "rel_momentum_5",
+    "rel_momentum_20",
+    "rsi_14",
+    "rsi_vs_vnindex",
+    "volume_ratio",
+    "bb_width_norm",
+    "cmf_20",
+    "atr_pct"
+  ]
+}

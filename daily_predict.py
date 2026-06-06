@@ -19,18 +19,25 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 
-DEFAULT_MODEL_PATH = "lgbm_alpha_5d_ranker.txt"
-DEFAULT_FEATURES_PATH = "lgbm_alpha_5d_features.json"
-DEFAULT_MODEL_VERSION = "lgbm_alpha_5d_ranker_v1"
+DEFAULT_MODEL_PATH = "ensemble_model.pkl"
+DEFAULT_FEATURES_PATH = "ensemble_features.json"
+DEFAULT_MODEL_VERSION = "ensemble_v1"
 MIN_UNIVERSE_SIZE = 50
 
 
 def load_model(model_path: str):
+    path = Path(model_path)
+    if path.suffix == ".pkl":
+        import pickle
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
     try:
         import lightgbm as lgb
     except ImportError as exc:
         raise RuntimeError("Can cai dat lightgbm de chay model ranker: pip install lightgbm") from exc
-    return lgb.Booster(model_file=str(Path(model_path)))
+    return lgb.Booster(model_file=str(path))
+
 
 
 def load_feature_config(features_path: str) -> dict[str, Any]:
@@ -73,11 +80,9 @@ def assign_ranker_signals(frame: pd.DataFrame) -> pd.DataFrame:
     ranked.loc[ranked["score_rank_pct"] >= 0.90, "ai_signal"] = "WEAK_STRONG"
     ranked.loc[(ranked["score_rank_pct"] < 0.90) & (ranked["score_rank_pct"] >= 0.70), "ai_signal"] = "WEAK"
 
-    # Market Regime Filter: Downgrade BUY signals if VNINDEX is in Bearish/High-Risk state
-    if "vnindex_momentum_20" in ranked.columns and "vnindex_rsi" in ranked.columns:
-        bearish_condition = (ranked["vnindex_momentum_20"] < -0.02) | (ranked["vnindex_rsi"] < 45)
-        to_downgrade = bearish_condition & ranked["ai_signal"].isin(["TOP_STRONG", "TOP"])
-        ranked.loc[to_downgrade, "ai_signal"] = "NEUTRAL"
+    # Market Regime Filter: We keep the raw signals intact so the user can always see the top picks,
+    # but the system will still display the market risk warning in the reports.
+    pass
 
     return ranked
 
@@ -174,7 +179,14 @@ def score_frame(model: Any, df: pd.DataFrame, features: list[str]) -> tuple[pd.D
         return usable, skipped
 
     x = usable[features]
-    scores = model.predict(x)
+    if isinstance(model, dict) and "meta" in model:
+        import numpy as np
+        lgb_preds = model["lgbm"].predict(x)
+        xgb_preds = model["xgb"].predict(x)
+        meta_X = np.column_stack((lgb_preds, xgb_preds))
+        scores = model["meta"].predict(meta_X)
+    else:
+        scores = model.predict(x)
     usable["ai_score"] = scores.astype(float)
     usable = assign_ranker_signals(usable)
     usable["target_date"] = usable["trading_date"].apply(compute_target_date)
@@ -325,7 +337,7 @@ def print_report(report: dict[str, Any]) -> None:
         print("  CANH BAO: THI TRUONG DANG TRONG GIAI DOAN RUI RO CAO / BEARISH")
         print(f"  -> VNINDEX Momentum 20: {report.get('vnindex_mom20', 0):.4f} (< -0.02)")
         print(f"  -> VNINDEX RSI:         {report.get('vnindex_rsi', 0):.2f} (< 45)")
-        print("  -> He thong da tu dong ha cac tin hieu MUA (TOP/TOP_STRONG) xuong NEUTRAL.")
+        print("  -> Canh bao: Nguoi dung nen can nhac khi giao dich mua moi vi xu huong chung Bearish.")
         print("!" * 72)
 
     print("\nPhan bo tin hieu:")
@@ -366,8 +378,8 @@ def run_daily_prediction(
     engine = get_db_engine()
     feature_config = load_feature_config(features_path)
     model_type = feature_config.get("model_type")
-    if model_type not in ("lightgbm_ranker", "lightgbm_regressor"):
-        raise ValueError(f"Chi ho tro model_type='lightgbm_ranker' hoac 'lightgbm_regressor', nhan duoc: {model_type}")
+    if model_type not in ("lightgbm_ranker", "lightgbm_regressor", "ensemble", "stacking_ensemble"):
+        raise ValueError(f"Chi ho tro model_type='lightgbm_ranker', 'lightgbm_regressor', 'ensemble' hoac 'stacking_ensemble', nhan duoc: {model_type}")
     model = load_model(model_path)
     features = feature_config["features"]
     source = fetch_indicator_frame(engine, target_date)
