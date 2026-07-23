@@ -28,17 +28,17 @@ with DAG(
         bash_command="python /opt/airflow/dags/crawler_pipeline.py --daily",
     )
 
-    # 2. Task cào chỉ số chung VNINDEX (Mới thêm vào)
-    sync_vnindex = BashOperator(
-        task_id="sync_vnindex",
-        bash_command="python /opt/airflow/dags/sync_vnindex.py",
-    )
-
-    # 3. Task tính toán chỉ báo kỹ thuật tổng hợp
+    # 2. Task tính toán chỉ báo kỹ thuật tổng hợp
     compute_daily_indicators = BashOperator(
         task_id="compute_daily_indicators",
         bash_command="python /opt/airflow/dags/compute_indicators.py --daily",
     )
 
-    # Thiết lập luồng: Cào xong cả Cổ phiếu & VNINDEX mới tiến hành tính chỉ báo
-    [run_sync, sync_vnindex] >> compute_daily_indicators
+    # 3. Task chạy mô hình AI dự báo
+    run_daily_prediction = BashOperator(
+        task_id="run_daily_prediction",
+        bash_command="python /opt/airflow/dags/daily_predict.py",
+    )
+
+    # Thiết lập luồng: Thu thập -> Tính toán chỉ báo -> Dự báo
+    run_sync >> compute_daily_indicators >> run_daily_prediction

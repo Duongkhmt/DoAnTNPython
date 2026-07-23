@@ -67,15 +67,16 @@ def parse_args():
     parser.add_argument("--workers", type=int, default=4, help="So worker threads")
     parser.add_argument("--max-concurrent", type=int, default=5, help="Max concurrent API calls")
     parser.add_argument("--dry-run", action="store_true", help="Khong goi API hay ghi DB")
+    parser.add_argument("--force", action="store_true", help="Bo qua checkpoint va check database de crawl lai toan bo")
     return parser.parse_args()
 
 ARGS = parse_args()
 
 if ARGS.daily:
-    START_DATE = (datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")
+    START_DATE = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
     print(f"[*] CHE DO DONG BO HANG NGAY: {START_DATE} den nay")
 else:
-    START_DATE = "2020-01-01"
+    START_DATE = "2021-01-01"
     print(f"[*] CHE DO DONG BO LICH SU: {START_DATE} den nay")
 
 
@@ -489,7 +490,8 @@ def sync_trading(symbols):
 
 def _load_symbol_set(sql, params=None):
     try:
-        df = pd.read_sql(text(sql), db.engine, params=params or {})
+        with db.engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn, params=params or {})
         if "symbol" not in df.columns:
             return set()
         return set(df["symbol"].dropna().tolist())
@@ -628,6 +630,14 @@ class CrawlOrchestrator:
         self.stages = stages
         self.checkpoint_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crawl_checkpoint.json")
         self.checkpoints = self.load_checkpoint()
+        if ARGS.force:
+            self.checkpoints = {}
+            if not ARGS.dry_run and os.path.exists(self.checkpoint_file):
+                try:
+                    os.remove(self.checkpoint_file)
+                    safe_print("[*] Da xoa file checkpoint cu de crawl lai tu dau.")
+                except Exception as e:
+                    safe_print(f"[WARNING] Khong the xoa file checkpoint: {e}")
 
     def load_checkpoint(self):
         if os.path.exists(self.checkpoint_file):
@@ -797,45 +807,46 @@ class CrawlOrchestrator:
         print(f"{'Symbol':<10} | {'Quote%':<10} | {'Trading%':<10} | {'Finance':<10} | {'Status':<10}")
         print("-" * 60)
         
-        for sym in symbols:
-            try:
-                # 1. Quote coverage
-                sql_quote = f"SELECT COUNT(*) FROM quote_history WHERE symbol = '{sym}' AND trading_date >= '{START_DATE}'"
-                quote_count = pd.read_sql(text(sql_quote), db.engine).iloc[0,0]
-                quote_pct = float((quote_count / expected_days) * 100)
-                
-                # 2. Trading coverage
-                sql_trade = f"SELECT COUNT(*) FROM trading_order_stats WHERE symbol = '{sym}' AND trading_date >= '{START_DATE}'"
-                trade_count = pd.read_sql(text(sql_trade), db.engine).iloc[0,0]
-                trade_pct = float((trade_count / expected_days) * 100)
-                
-                # 3. Finance exists
-                sql_fin = f"SELECT COUNT(*) FROM finance WHERE symbol = '{sym}'"
-                fin_count = pd.read_sql(text(sql_fin), db.engine).iloc[0,0]
-                fin_exists = bool(fin_count > 0)
-                
-                status = "SUCCESS"
-                if not fin_exists:
-                    status = "MISSING"
-                elif quote_pct < 80 or trade_pct < 80:
-                    status = "INCOMPLETE"
+        with db.engine.connect() as conn:
+            for sym in symbols:
+                try:
+                    # 1. Quote coverage
+                    sql_quote = f"SELECT COUNT(*) FROM quote_history WHERE symbol = '{sym}' AND trading_date >= '{START_DATE}'"
+                    quote_count = pd.read_sql(text(sql_quote), conn).iloc[0,0]
+                    quote_pct = float((quote_count / expected_days) * 100)
                     
-                report[sym] = {
-                    "quote_coverage": round(quote_pct, 2),
-                    "trading_coverage": round(trade_pct, 2),
-                    "finance_exists": fin_exists,
-                    "status": status
-                }
+                    # 2. Trading coverage
+                    sql_trade = f"SELECT COUNT(*) FROM trading_order_stats WHERE symbol = '{sym}' AND trading_date >= '{START_DATE}'"
+                    trade_count = pd.read_sql(text(sql_trade), conn).iloc[0,0]
+                    trade_pct = float((trade_count / expected_days) * 100)
+                    
+                    # 3. Finance exists
+                    sql_fin = f"SELECT COUNT(*) FROM finance WHERE symbol = '{sym}'"
+                    fin_count = pd.read_sql(text(sql_fin), conn).iloc[0,0]
+                    fin_exists = bool(fin_count > 0)
                 
-                print(f"{sym:<10} | {quote_pct:<9.1f}% | {trade_pct:<9.1f}% | {'Yes' if fin_exists else 'No':<10} | {status:<10}")
-                
-                if status in ["MISSING", "INCOMPLETE"]:
-                    missing_or_incomplete.append(sym)
-                    # Chỉ ghi đè checkpoint nếu trạng thái hiện tại khác SUCCESS
-                    if self.checkpoints.get(sym, {}).get("status") != "SUCCESS":
-                        self.save_checkpoint(sym, status)
-            except Exception as e:
-                safe_print(f"[ERROR] Completeness check fail cho {sym}: {e}")
+                    status = "SUCCESS"
+                    if not fin_exists:
+                        status = "MISSING"
+                    elif quote_pct < 80 or trade_pct < 80:
+                        status = "INCOMPLETE"
+                        
+                    report[sym] = {
+                        "quote_coverage": round(quote_pct, 2),
+                        "trading_coverage": round(trade_pct, 2),
+                        "finance_exists": fin_exists,
+                        "status": status
+                    }
+                    
+                    print(f"{sym:<10} | {quote_pct:<9.1f}% | {trade_pct:<9.1f}% | {'Yes' if fin_exists else 'No':<10} | {status:<10}")
+                    
+                    if status in ["MISSING", "INCOMPLETE"]:
+                        missing_or_incomplete.append(sym)
+                        # Chỉ ghi đè checkpoint nếu trạng thái hiện tại khác SUCCESS
+                        if self.checkpoints.get(sym, {}).get("status") != "SUCCESS":
+                            self.save_checkpoint(sym, status)
+                except Exception as e:
+                    safe_print(f"[ERROR] Completeness check fail cho {sym}: {e}")
 
         # Save completeness report
         report_file = os.path.join(os.getcwd(), f"completeness_report_{RUN_ID}_{TODAY}.json")
@@ -873,15 +884,20 @@ def main():
         selected_stages = ARGS.stages or ["quotes", "company", "finance", "trading"]
 
         done_symbols = get_done_symbols(selected_stages)
-        if not ARGS.symbols:
+        if not ARGS.symbols and not ARGS.force:
             symbols = [s for s in symbols if s not in done_symbols]
 
         if ARGS.limit:
             symbols = symbols[: ARGS.limit]
 
-        safe_print(f"\nTong ma: {len(symbols) + len(done_symbols)}")
-        safe_print(f"  Da co: {len(done_symbols)}")
-        safe_print(f"  Con crawl: {len(symbols)}")
+        if ARGS.force:
+            safe_print(f"\nTong ma: {len(symbols)}")
+            safe_print(f"  Da co: {len(done_symbols)} (Bo qua kiem tra database do dung --force)")
+            safe_print(f"  Con crawl: {len(symbols)}")
+        else:
+            safe_print(f"\nTong ma: {len(symbols) + len(done_symbols)}")
+            safe_print(f"  Da co: {len(done_symbols)}")
+            safe_print(f"  Con crawl: {len(symbols)}")
         safe_print(f"  Stage se chay: {selected_stages}")
 
         if not symbols:
@@ -898,7 +914,10 @@ def main():
         failed_symbols = orchestrator.run_parallel(symbols)
         
         # 2. Level 2 Retry
-        final_failed = orchestrator.retry_failed(failed_symbols, max_rounds=1)
+        # Lược bỏ bước Retry vì các mã lỗi (khoảng 435 mã) hầu hết do thiếu thanh khoản hoặc API nguồn không có dữ liệu.
+        # Giữ lại comment code để trình bày cơ chế Retry trong báo cáo/demo Đồ án.
+        # final_failed = orchestrator.retry_failed(failed_symbols, max_rounds=1)
+        final_failed = failed_symbols
         
         # 3. Completeness Check
         report, incomplete = orchestrator.check_data_completeness(symbols)

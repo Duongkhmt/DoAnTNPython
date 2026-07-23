@@ -1,0 +1,40 @@
+================================================================================
+NỘI DUNG SAO CHÉP VÀO BÁO CÁO ĐỒ ÁN
+CHƯƠNG 2: MỤC THIẾT KẾ MÔ HÌNH TRÍ TUỆ NHÂN TẠO (AI)
+================================================================================
+
+2.5. THIẾT KẾ VÀ XÂY DỰNG MÔ HÌNH TRÍ TUỆ NHÂN TẠO (AI)
+
+2.5.1. Tổng quan Kiến trúc Hệ thống AI Kép (Dual-AI Architecture)
+Trong lĩnh vực giao dịch định lượng (Quantitative Trading), việc chỉ tập trung dự báo giá trị của một cổ phiếu riêng lẻ thường ẩn chứa rủi ro hệ thống (Systematic Risk) rất lớn. Khi thị trường chung bước vào chu kỳ suy thoái (Downtrend), phần lớn các cổ phiếu đều chịu áp lực bán tháo bất kể nền tảng cơ bản hay kỹ thuật tốt đến đâu.
+Để giải quyết bài toán này, đồ án đề xuất và triển khai "Kiến trúc Hệ thống AI Kép" (Dual-AI Architecture) hoạt động tương hỗ trên hai tầng độc lập:
+- Tầng Vĩ mô (Macro Filter): Hoạt động như một lá chắn rủi ro (Market Shield), chịu trách nhiệm đánh giá trạng thái và xu hướng của thị trường chung (VN-Index) trong ngắn và trung hạn.
+- Tầng Vi mô (Micro Selector): Đóng vai trò là công cụ tấn công, chịu trách nhiệm chấm điểm, xếp hạng và chọn lọc ra các cổ phiếu có khả năng tăng trưởng vượt trội nhất (Outperform) so với thị trường.
+Sự kết hợp đồng bộ giữa hai tầng giúp hệ thống đạt được triết lý đầu tư an toàn: "Chỉ giải ngân vào những cổ phiếu tiềm năng nhất khi thị trường chung được dự báo ở trạng thái ít rủi ro".
+
+2.5.2. Tầng Vi mô (Micro Selector): Xếp hạng Cổ phiếu riêng lẻ
+Thay vì dự báo giá trị tuyệt đối của cổ phiếu (ví dụ: ngày mai giá cổ phiếu A là bao nhiêu), hệ thống chuyển đổi thành bài toán xếp hạng (Ranking) để loại bỏ nhiễu của thị trường chung.
+- Mục tiêu dự báo (Target Variable): Mô hình dự báo chỉ số alpha_rank_pct (Xếp hạng phần trăm tỷ suất sinh lợi vượt trội). Chỉ số này đo lường sức mạnh của cổ phiếu so với chính thị trường chung (VN-Index) sau 5 phiên giao dịch. Giá trị dự báo là một biến số liên tục nằm trong khoảng (0, 1].
+- Trích xuất đặc trưng (Feature Engineering): Hệ thống sử dụng bộ đặc trưng lấy cảm hứng từ cấu trúc Alpha158 của thư viện Qlib. Các đặc trưng này được tính toán từ dữ liệu giá (Open, High, Low, Close) và khối lượng giao dịch, đại diện cho các yếu tố về động lượng (Momentum), biến động (Volatility) và sức mạnh tương đối.
+- Thuật toán Hồi quy (Stacking Ensemble Regressor): Để tối đa hóa độ chính xác, hệ thống không sử dụng một mô hình đơn lẻ mà kết hợp thuật toán LightGBM Regressor và XGBoost Regressor thông qua kỹ thuật học máy tập hợp (Ensemble Learning) theo cấu trúc Xếp chồng (Stacking). Các dự báo từ hai mô hình cơ sở này được đưa vào một mô hình Meta-Learner (Ridge Regression) để tổng hợp ra điểm số cuối cùng (AI Score).
+
+2.5.3. Tầng Vĩ mô (Macro Filter): Dự báo Xu hướng VN-Index
+Để bảo vệ thành quả giao dịch, Tầng Vĩ mô đóng vai trò như một màng lọc kiểm soát tỷ trọng giải ngân dựa trên xu hướng tương lai của VN-Index.
+- Mục tiêu dự báo (Target Variable): Đây là bài toán phân loại nhị phân (Binary Classification). Mục tiêu direction_5d nhận giá trị 1 (TĂNG) nếu tỷ suất sinh lời của VN-Index sau 5 phiên lớn hơn 0, và nhận giá trị 0 (GIẢM) nếu ngược lại. Chu kỳ T+5 được lựa chọn nhằm triệt tiêu nhiễu trong phiên và phù hợp với chu kỳ thanh toán T+2.5 tại Việt Nam.
+- Trích xuất đặc trưng: Sử dụng 10 đặc trưng vĩ mô cốt lõi được tính toán trực tiếp từ dữ liệu VN-Index, bao gồm các chỉ báo dòng tiền (Chaikin Money Flow - CMF), mức độ nén giá (Bollinger Bands Width), mức độ rủi ro (ATR), và các xung lực giá ngắn/trung hạn.
+- Thuật toán Phân loại (LightGBM Classifier): Hệ thống sử dụng thuật toán LightGBM Classifier. Với cơ chế phát triển cây theo lá (Leaf-wise growth), thuật toán này cho tốc độ huấn luyện nhanh và độ chính xác cao. Đồng thời, tham số class_weight='balanced' được cấu hình để giải quyết hiện tượng mất cân bằng dữ liệu, do thị trường chứng khoán trong dài hạn thường có chu kỳ tăng dài hơn chu kỳ giảm.
+
+2.5.4. Kỹ thuật Huấn luyện và Phòng chống Rò rỉ Dữ liệu (Data Leakage)
+Dữ liệu tài chính là dữ liệu chuỗi thời gian (Time-series). Nếu áp dụng phương pháp chia dữ liệu ngẫu nhiên (Random Split) phổ biến trong Machine Learning, mô hình sẽ mắc phải sai lầm nghiêm trọng là "Rò rỉ dữ liệu" (Data Leakage) — học thông tin từ tương lai để dự đoán quá khứ.
+Để ngăn chặn điều này, hệ thống áp dụng chiến lược Time-series Split. Dữ liệu được cắt theo đúng trật tự thời gian tuyến tính: tập huấn luyện (Train set) chỉ bao gồm dữ liệu quá khứ, và tập kiểm thử (Test set) bao gồm dữ liệu tương lai kế tiếp. Điều này đảm bảo mô hình được đánh giá trong một môi trường mô phỏng thực tế hoàn toàn khắt khe.
+
+2.5.5. Đánh giá Hiệu năng Mô hình (Evaluation Metrics)
+- Đối với Tầng Vi mô (Hồi quy): Hiệu năng được đánh giá bằng chỉ số Rank Information Coefficient (Rank IC). Rank IC đo lường mức độ tương quan thứ hạng giữa điểm AI Score do mô hình dự báo và tỷ suất sinh lời thực tế của cổ phiếu. Hệ số Rank IC dương và ổn định chứng tỏ mô hình có khả năng chọn lọc cổ phiếu tốt, tối ưu hóa được lợi nhuận thặng dư (Alpha).
+- Đối với Tầng Vĩ mô (Phân loại): Hiệu năng được đánh giá thông qua chỉ số Diện tích 
+dưới đường cong ROC (ROC-AUC) và Độ chính xác phân loại (Accuracy). 
+ROC-AUC đo lường khả năng phân biệt chuẩn xác của mô hình giữa hai trạng thái thị trường: 
+rủi ro (GIẢM) và an toàn (TĂNG) ở nhiều ngưỡng xác suất khác nhau. 
+Mức ROC-AUC càng cao, kết hợp cùng độ chính xác phân loại ổn định, 
+minh chứng cho việc hệ thống có khả năng cung cấp lợi thế giao dịch (Trading Edge) 
+vững chắc và kích hoạt kịp thời các tín hiệu phòng thủ rủi ro cho nhà đầu tư.
+================================================================================

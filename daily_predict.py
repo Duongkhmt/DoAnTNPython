@@ -292,6 +292,8 @@ def fetch_previous_signal_changes(engine: Any, predict_date: pd.Timestamp) -> pd
         return pd.read_sql(query, conn, params={"predict_date": pd.Timestamp(predict_date).date()})
 
 
+
+
 def build_report(predictions: pd.DataFrame, skipped: pd.DataFrame, engine: Any) -> dict[str, Any]:
     latest_date = pd.Timestamp(predictions["trading_date"].iloc[0]).date() if not predictions.empty else None
     signal_counts = Counter(predictions["ai_signal"].tolist())
@@ -363,6 +365,103 @@ def print_report(report: dict[str, Any]) -> None:
         print("  Khong co.")
 
 
+def predict_vnindex_trend(
+    engine: Any,
+    predict_date: str,
+    vnindex_model_path: str = "vnindex_model.pkl",
+    vnindex_features_path: str = "vnindex_features.json"
+) -> dict[str, Any] | None:
+    if not os.path.exists(vnindex_model_path) or not os.path.exists(vnindex_features_path):
+        print("[WARNING] Khong tim thay model hoac config features cua VNINDEX. Bo qua du bao VNINDEX.")
+        return None
+        
+    with open(vnindex_model_path, "rb") as f:
+        model = pickle.load(f)
+    with open(vnindex_features_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    features = config["features"]
+    
+    query = text("""
+        SELECT *
+        FROM technical_indicators
+        WHERE symbol = 'VNINDEX' AND trading_date = :predict_date
+    """)
+    with engine.begin() as conn:
+        df = pd.read_sql(query, conn, params={"predict_date": predict_date})
+        
+    if df.empty:
+        print(f"[WARNING] Khong tim thay du lieu technical_indicators cho VNINDEX vao ngay {predict_date}")
+        return None
+        
+    missing = [f for f in features if f not in df.columns]
+    if missing:
+        print(f"[WARNING] Thieu feature cho VNINDEX: {missing}")
+        return None
+        
+    X = df[features]
+    if X.isna().any().any():
+        X = X.ffill().bfill()
+        
+    proba = float(model.predict_proba(X)[0, 1])
+    trend = "TANG" if proba >= 0.5 else "GIAM"
+    
+    target_dt = compute_target_date(pd.Timestamp(predict_date))
+    
+    upsert_sql = text("""
+        INSERT INTO ml_predictions (
+            symbol,
+            predict_date,
+            target_date,
+            ai_score,
+            ai_signal,
+            model_name,
+            model_version,
+            model_used,
+            trend,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            'VNINDEX',
+            :predict_date,
+            :target_date,
+            :ai_score,
+            :ai_signal,
+            :model_name,
+            :model_version,
+            :model_used,
+            :trend,
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (symbol, predict_date)
+        DO UPDATE SET
+            target_date = EXCLUDED.target_date,
+            ai_score = EXCLUDED.ai_score,
+            ai_signal = EXCLUDED.ai_signal,
+            model_name = EXCLUDED.model_name,
+            model_version = EXCLUDED.model_version,
+            model_used = EXCLUDED.model_used,
+            trend = EXCLUDED.trend,
+            updated_at = CURRENT_TIMESTAMP
+    """)
+    
+    with engine.begin() as conn:
+        conn.execute(upsert_sql, {
+            "predict_date": pd.Timestamp(predict_date).date(),
+            "target_date": pd.Timestamp(target_dt).date(),
+            "ai_score": proba,
+            "ai_signal": trend,
+            "model_name": os.path.basename(vnindex_model_path),
+            "model_version": "vnindex_v1",
+            "model_used": os.path.basename(vnindex_model_path),
+            "trend": trend
+        })
+        
+    print(f"[SUCCESS] Da du bao VNINDEX cho ngay {predict_date}: {trend} (proba={proba:.4f})")
+    return {"trend": trend, "probability": proba}
+
+
 def run_daily_prediction(
     model_path: str = DEFAULT_MODEL_PATH,
     features_path: str = DEFAULT_FEATURES_PATH,
@@ -396,6 +495,14 @@ def run_daily_prediction(
             model_name=os.path.basename(model_path),
             model_version=resolved_version,
         )
+        
+        # Tich hop du bao VNINDEX
+        try:
+            predict_date_str = pd.Timestamp(predictions["trading_date"].iloc[0]).strftime("%Y-%m-%d")
+            predict_vnindex_trend(engine, predict_date_str)
+        except Exception as exc:
+            print(f"[ERROR] Loi khi du bao VNINDEX: {exc}")
+            
     report = build_report(predictions, skipped, engine)
     print_report(report)
     return report

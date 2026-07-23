@@ -80,9 +80,9 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     -- Volume
     obv             FLOAT,
     vwap            FLOAT,
-    cmf_20          FLOAT,
+    cmf_20          FLOAT, --đặc trưng 
     volume_sma_20   FLOAT,
-    volume_ratio    FLOAT,
+    volume_ratio    FLOAT, --đặc trưng 
 
     -- Candlestick patterns (1 = xuất hiện, 0 = không)
     candle_body_size    FLOAT,
@@ -105,8 +105,8 @@ CREATE TABLE IF NOT EXISTS technical_indicators (
     volume_momentum_5   FLOAT,
     macd_norm           FLOAT,
     macd_hist_norm      FLOAT,
-    atr_pct             FLOAT,
-    bb_width_norm       FLOAT,
+    atr_pct             FLOAT, --đặc trưng 
+    bb_width_norm       FLOAT, --đặc trưng 
     candle_body_pct     FLOAT,
     candle_upper_pct    FLOAT,
     candle_lower_pct    FLOAT,
@@ -125,13 +125,13 @@ CREATE INDEX IF NOT EXISTS idx_ti_date   ON technical_indicators (trading_date);
 def create_table():
     with engine.begin() as conn:
         conn.execute(text(CREATE_TABLE_SQL))
-        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS rsi_14 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS rsi_14 FLOAT"))#đặc trưng 
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS stoch_k FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS stoch_d FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS williams_r FLOAT"))
         
         # Thêm 14 normalized features mới
-        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma20 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma20 FLOAT"))#đặc trưng 
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma50 FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS sma20_vs_sma50 FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_momentum_5 FLOAT"))
@@ -147,7 +147,7 @@ def create_table():
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS candle_lower_pct FLOAT"))
         
         # Qlib Alpha158 features
-        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma5 FLOAT"))
+        conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS price_vs_sma5 FLOAT"))#đặc trưng 
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS volatility_10 FLOAT"))
         conn.execute(text("ALTER TABLE technical_indicators ADD COLUMN IF NOT EXISTS volatility_20 FLOAT"))
     print("✅ Bảng technical_indicators đã sẵn sàng.")
@@ -471,7 +471,8 @@ def process_symbol(symbol: str, daily_mode: bool = False) -> int:
             ORDER BY trading_date
         """)
 
-    df = pd.read_sql(query, engine, params={"sym": symbol})
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn, params={"sym": symbol})
     if len(df) < 30:
         return 0
 
@@ -499,7 +500,8 @@ def process_symbol(symbol: str, daily_mode: bool = False) -> int:
 
 
 def get_all_symbols() -> list[str]:
-    df = pd.read_sql("SELECT DISTINCT symbol FROM quote_history ORDER BY symbol", engine)
+    with engine.connect() as conn:
+        df = pd.read_sql("SELECT DISTINCT symbol FROM quote_history ORDER BY symbol", conn)
     return df["symbol"].tolist()
 
 

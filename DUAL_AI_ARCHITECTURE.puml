@@ -1,0 +1,51 @@
+@startuml
+!theme spacelab
+skinparam BoxPadding 10
+skinparam componentStyle rectangle
+
+title Kiến trúc Hệ thống AI Kép (Dual-AI Architecture)
+
+actor "Nhà Đầu Tư" as User
+
+database "Cơ sở Dữ liệu\n(PostgreSQL + TimescaleDB)" as DB {
+  [Dữ liệu VN-Index]
+  [Dữ liệu Cổ phiếu riêng lẻ]
+}
+
+package "TẦNG 1: BỘ LỌC VĨ MÔ (Macro Filter)" {
+  [LightGBM Classifier] as Model1
+  note right of Model1: Bài toán: Phân loại nhị phân\nChống rò rỉ: Time-series Split
+  
+  [Dự báo Xu hướng VN-Index T+5] as Output1
+  
+  [Dữ liệu VN-Index] --> Model1 : 10 Đặc trưng vĩ mô\n(MFI, RSI, BB Width...)
+  Model1 --> Output1 : Kết quả: TĂNG / GIẢM
+}
+
+package "TẦNG 2: BỘ CHỌN LỌC VI MÔ (Micro Selector)" {
+  [Stacking Ensemble Regressor\n(LightGBM + XGBoost)] as Model2
+  note right of Model2: Bài toán: Hồi quy\nMục tiêu: Dự báo alpha_rank_pct
+  
+  [Danh sách Xếp hạng Cổ phiếu] as Output2
+  
+  [Dữ liệu Cổ phiếu riêng lẻ] --> Model2 : Các đặc trưng Alpha158
+  Model2 --> Output2 : Top cổ phiếu Outperform
+}
+
+package "TÍCH HỢP & ĐỒNG BỘ TÍN HIỆU" {
+  node "Cơ chế Market Shield\n(Quản trị rủi ro)" as Shield
+  
+  Output1 --> Shield : Tín hiệu thị trường
+  Output2 --> Shield : Tín hiệu mua/bán
+  
+  Shield --> User : Cảnh báo thu hẹp tỷ trọng (Phòng thủ)
+  Shield --> User : Khuyến nghị giải ngân Top cổ phiếu
+}
+
+note bottom of Shield
+  Quy tắc đồng bộ (Logic Giao dịch):
+  - Nếu VN-Index = GIẢM: Kích hoạt lá chắn, hạ cấp tín hiệu mua.
+  - Nếu VN-Index = TĂNG: Tự tin giải ngân vào danh sách cổ phiếu hạng cao.
+end note
+
+@enduml

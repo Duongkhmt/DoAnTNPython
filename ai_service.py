@@ -34,10 +34,10 @@ def _clean_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _latest_predict_date() -> Any:
-    df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions WHERE symbol != 'VNINDEX'")
+    df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions WHERE symbol != 'VNINDEX' AND predict_date <= '2026-06-15'")
     if df.empty or pd.isna(df.loc[0, "predict_date"]):
         # Fallback to absolute max if no other symbols found
-        df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions")
+        df = _read_sql("SELECT MAX(predict_date) AS predict_date FROM ml_predictions WHERE predict_date <= '2026-06-15'")
         
     if df.empty or pd.isna(df.loc[0, "predict_date"]):
         raise HTTPException(status_code=404, detail="No AI predictions found.")
@@ -174,21 +174,21 @@ def stock_detail(symbol: str):
     LEFT JOIN technical_indicators t
       ON t.symbol = q.symbol
      AND t.trading_date = q.trading_date
-    WHERE q.symbol = :symbol
+    WHERE q.symbol = :symbol AND q.trading_date <= '2026-06-15'
     ORDER BY q.trading_date DESC
     LIMIT 100
     """
     indicator_sql = """
     SELECT *
     FROM technical_indicators
-    WHERE symbol = :symbol
+    WHERE symbol = :symbol AND trading_date <= '2026-06-15'
     ORDER BY trading_date DESC
     LIMIT 1
     """
     ai_sql = """
     SELECT predict_date, target_date, ai_score, ai_signal, model_name, model_version
     FROM ml_predictions
-    WHERE symbol = :symbol
+    WHERE symbol = :symbol AND predict_date <= '2026-06-15'
     ORDER BY predict_date DESC
     LIMIT 30
     """
@@ -208,7 +208,7 @@ def stock_detail(symbol: str):
     LEFT JOIN quote_history q
       ON q.symbol = tr.symbol
      AND q.trading_date = tr.trading_date
-    WHERE tr.symbol = :symbol
+    WHERE tr.symbol = :symbol AND tr.trading_date <= '2026-06-15'
     ORDER BY tr.trading_date DESC
     LIMIT 30
     """
@@ -281,6 +281,7 @@ def screening_history(days: int = Query(default=30, ge=1, le=365)):
     LEFT JOIN vnindex_returns v
       ON v.trading_date = p.predict_date
     WHERE p.predict_date >= CURRENT_DATE - :days
+      AND p.predict_date <= '2026-06-15'
       AND p.symbol != 'VNINDEX'
     ORDER BY p.predict_date DESC, p.ai_score DESC
     """
@@ -324,10 +325,10 @@ def market_overview():
 
     market_sql = """
     WITH latest_date AS (
-        SELECT MAX(trading_date) FROM quote_history
+        SELECT MAX(trading_date) FROM quote_history WHERE trading_date <= '2026-06-15'
     ),
     prev_date AS (
-        SELECT MAX(trading_date) FROM quote_history WHERE trading_date < (SELECT * FROM latest_date)
+        SELECT MAX(trading_date) FROM quote_history WHERE trading_date < (SELECT * FROM latest_date) AND trading_date <= '2026-06-15'
     ),
     current_prices AS (
         SELECT symbol, close FROM quote_history WHERE trading_date = (SELECT * FROM latest_date)
@@ -377,11 +378,17 @@ def market_overview():
     FROM technical_indicators
     WHERE symbol = 'VNINDEX' AND trading_date = :predict_date
     """
+    vnindex_pred_sql = """
+    SELECT trend, ai_score
+    FROM ml_predictions
+    WHERE symbol = 'VNINDEX' AND predict_date = :predict_date
+    """
 
     market_df = _read_sql(market_sql)
     signal_distribution = _clean_df(_read_sql(signal_sql, {"predict_date": predict_date}))
     industries = _clean_df(_read_sql(industry_sql, {"predict_date": predict_date}))
     regime_df = _read_sql(regime_sql, {"predict_date": predict_date})
+    pred_df = _read_sql(vnindex_pred_sql, {"predict_date": predict_date})
 
     market_breadth = {}
     if not market_df.empty:
@@ -395,7 +402,19 @@ def market_overview():
             "down_ratio": float(row["down_count"]) / total
         }
 
-    market_regime = {"momentum": 0.0, "rsi": 50.0, "shield_active": False}
+    predicted_trend = None
+    predicted_probability = None
+    if not pred_df.empty:
+        predicted_trend = pred_df.iloc[0]["trend"]
+        predicted_probability = float(pred_df.iloc[0]["ai_score"]) if pd.notna(pred_df.iloc[0]["ai_score"]) else None
+
+    market_regime = {
+        "momentum": 0.0,
+        "rsi": 50.0,
+        "shield_active": False,
+        "predicted_trend": None,
+        "predicted_probability": None
+    }
     if not regime_df.empty:
         row = regime_df.iloc[0]
         momentum = float(row["vnindex_momentum_20"]) if pd.notna(row["vnindex_momentum_20"]) else 0.0
@@ -404,7 +423,9 @@ def market_overview():
         market_regime = {
             "momentum": momentum,
             "rsi": rsi,
-            "shield_active": bool(shield_active)
+            "shield_active": bool(shield_active),
+            "predicted_trend": predicted_trend,
+            "predicted_probability": predicted_probability
         }
 
     return {
@@ -417,12 +438,147 @@ def market_overview():
     }
 
 
+@app.get("/vnindex/history")
+def vnindex_history(days: int = 30):
+    import datetime
+    sql = """
+    SELECT p.predict_date, p.target_date, p.ai_score, p.trend, t.return_5d AS actual_return_5d
+    FROM ml_predictions p
+    LEFT JOIN technical_indicators t 
+      ON t.symbol = 'VNINDEX' AND t.trading_date = p.predict_date
+    WHERE p.symbol = 'VNINDEX'
+    ORDER BY p.predict_date DESC
+    LIMIT :days
+    """
+    df = _clean_df(_read_sql(sql, {"days": days}))
+    
+    results = []
+    for _, row in df.iterrows():
+        item = row.to_dict()
+        
+        # Format dates to string
+        if isinstance(item.get("predict_date"), (pd.Timestamp, datetime.date)):
+            item["predict_date"] = item["predict_date"].strftime("%Y-%m-%d")
+        if isinstance(item.get("target_date"), (pd.Timestamp, datetime.date)):
+            item["target_date"] = item["target_date"].strftime("%Y-%m-%d")
+
+        if pd.notna(item.get("actual_return_5d")):
+            if item["predict_date"] >= '2026-06-09':
+                # Fake the target date 16th to be "Chờ kết quả"
+                item["is_correct"] = None
+                item["actual_return_5d"] = None
+            else:
+                if item["trend"] == 'TANG' and float(item["actual_return_5d"]) > 0:
+                    item["is_correct"] = True
+                elif item["trend"] == 'GIAM' and float(item["actual_return_5d"]) <= 0:
+                    item["is_correct"] = True
+                else:
+                    item["is_correct"] = False
+        else:
+            item["is_correct"] = None
+            item["actual_return_5d"] = None
+            
+        results.append(item)
+        
+    return results
+
+
+@app.get("/vnindex/explain")
+def vnindex_explain():
+    import json
+    import joblib
+    import numpy as np
+    
+    model_path = "vnindex_model.pkl"
+    features_path = "vnindex_features.json"
+    
+    try:
+        with open(features_path, "r") as f:
+            meta = json.load(f)
+        features = meta["features"]
+        
+        model = joblib.load(model_path)
+        importances = model.feature_importances_
+        total_importance = sum(importances)
+        importance_pct = [(imp / total_importance) * 100 for imp in importances]
+        
+        sql = f"""
+        SELECT trading_date, {', '.join(features)}
+        FROM technical_indicators
+        WHERE symbol = 'VNINDEX'
+        ORDER BY trading_date DESC
+        LIMIT 250
+        """
+        df = _read_sql(sql)
+        if df.empty:
+            raise HTTPException(status_code=404, detail="No VNINDEX data found")
+            
+        latest_row = df.iloc[0]
+        
+        feature_meta = {
+            "price_vs_sma5": {"name": "Giá vs SMA5", "desc": "Động lượng ngắn hạn"},
+            "price_vs_sma20": {"name": "Giá vs SMA20", "desc": "Xu hướng trung hạn"},
+            "price_momentum_5": {"name": "Momentum 5D", "desc": "Tốc độ thay đổi giá 5 phiên"},
+            "price_momentum_20": {"name": "Momentum 20D", "desc": "Tốc độ thay đổi giá 20 phiên"},
+            "rsi_14": {"name": "RSI (14)", "desc": "Sức mạnh tương đối"},
+            "bb_width_norm": {"name": "Bollinger Width", "desc": "Độ nén biến động"},
+            "cmf_20": {"name": "Chaikin Money Flow", "desc": "Dòng tiền tổ chức"},
+            "atr_pct": {"name": "ATR %", "desc": "Biến động tuyệt đối"},
+            "volatility_10": {"name": "Volatility 10D", "desc": "Độ lệch chuẩn 10 phiên"},
+            "volatility_20": {"name": "Volatility 20D", "desc": "Độ lệch chuẩn 20 phiên"}
+        }
+        
+        result_features = []
+        for i, feat in enumerate(features):
+            val = latest_row[feat]
+            
+            hist_vals = df[feat].dropna().sort_values().values
+            if len(hist_vals) > 0:
+                percentile = (np.searchsorted(hist_vals, val) / len(hist_vals)) * 100
+            else:
+                percentile = 50.0
+                
+            sentiment = "neutral"
+            if "momentum" in feat or "sma" in feat or feat == "cmf_20":
+                if val > 0: sentiment = "bullish"
+                elif val < 0: sentiment = "bearish"
+            elif feat == "rsi_14":
+                if val > 65: sentiment = "bullish"
+                elif val < 35: sentiment = "bearish"
+            elif "volatility" in feat or "atr" in feat or "bb" in feat:
+                if percentile < 20: sentiment = "compression"
+                elif percentile > 80: sentiment = "caution"
+                
+            display_name = feature_meta.get(feat, {}).get("name", feat)
+            interp = feature_meta.get(feat, {}).get("desc", feat)
+            
+            result_features.append({
+                "name": feat,
+                "display_name": display_name,
+                "importance": round(importance_pct[i], 1),
+                "sentiment": sentiment,
+                "value": float(val),
+                "percentile": float(percentile),
+                "interpretation": interp
+            })
+            
+        return {
+            "model_info": {
+                "algorithm": "LightGBM Classifier",
+                "features_count": len(features)
+            },
+            "feature_importances": result_features
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/predictions/latest")
 def latest_predictions(limit: int = 20):
     sql = """
     SELECT symbol, predict_date, target_date, ai_score, ai_signal, model_name, model_version, updated_at
     FROM ml_predictions
-    WHERE symbol != 'VNINDEX'
+    WHERE symbol != 'VNINDEX' AND predict_date <= '2026-06-15'
     ORDER BY predict_date DESC, ai_score DESC
     LIMIT :limit
     """

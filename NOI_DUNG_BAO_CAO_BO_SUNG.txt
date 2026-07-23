@@ -1,0 +1,31 @@
+================================================================================
+NỘI DUNG SAO CHÉP VÀO BÁO CÁO ĐỒ ÁN (PHẦN BỔ SUNG MÔ HÌNH VN-INDEX)
+================================================================================
+
+[Bổ sung vào Chương 1 - Lý thuyết nền tảng]
+
+1.3.4.1. Khái niệm Bộ lọc xu hướng thị trường (Market Regime Filter)
+Trong đầu tư chứng khoán, có tới 75-80% cổ phiếu riêng lẻ sẽ biến động cùng chiều với chỉ số thị trường chung (VN-Index). Việc chỉ tập trung dự báo từng cổ phiếu mà bỏ qua bối cảnh vĩ mô thường dẫn đến rủi ro "mua đúng cổ phiếu nhưng sai thời điểm".
+Khái niệm "Market Regime" (Trạng thái thị trường) phân loại thị trường thành các giai đoạn khác nhau như xu hướng tăng (Uptrend), xu hướng giảm (Downtrend), hoặc đi ngang (Sideway).
+Bộ lọc xu hướng thị trường (Market Regime Filter) là một cơ chế quản trị rủi ro ở cấp độ danh mục. Nhiệm vụ của nó là dự đoán trạng thái của thị trường chung để đưa ra mức độ giải ngân phù hợp. Khi bộ lọc cảnh báo trạng thái thị trường rủi ro (Downtrend), hệ thống sẽ chủ động kích hoạt phòng thủ, hạn chế việc mô hình chọn lọc vi mô (Stock Ranking) liên tục đưa ra tín hiệu mua vào, qua đó triệt tiêu được rủi ro hệ thống (Systematic Risk).
+
+1.3.4.2. Thuật toán LightGBM Classifier và kỹ thuật chống rò rỉ dữ liệu (Time-series Split)
+* Thuật toán LightGBM:
+LightGBM (Light Gradient Boosting Machine) là một thuật toán học máy mã nguồn mở dựa trên mô hình cây quyết định (Decision Tree) được Microsoft phát triển. Điểm khác biệt cốt lõi của LightGBM so với các thuật toán Boosting truyền thống (như XGBoost) là phương pháp phát triển cây theo lá (Leaf-wise growth) thay vì theo tầng (Level-wise growth). 
+Leaf-wise cho phép thuật toán tìm và phân chia những chiếc lá có mức độ giảm thiểu thất thoát (loss) lớn nhất, giúp mô hình hội tụ cực nhanh, xử lý dữ liệu lớn hiệu quả và duy trì được độ chính xác cao.
+Đối với bài toán dự báo xu hướng thị trường (VN-Index), LightGBM Classifier được áp dụng để phân loại các đặc trưng vĩ mô thành hai lớp nhãn (Tăng/Giảm). Nó cũng cung cấp khả năng tự động điều chỉnh trọng số lớp (class_weight='balanced') nhằm khắc phục hiện tượng mất cân bằng dữ liệu tự nhiên, do lịch sử chỉ số chứng khoán trong dài hạn thường có xu hướng tăng nhiều hơn giảm.
+
+* Kỹ thuật Time-series Split:
+Dữ liệu tài chính mang tính chất chuỗi thời gian (Time-series). Việc áp dụng kỹ thuật chia tập dữ liệu ngẫu nhiên (Random Train-Test Split) theo tỷ lệ 80/20 như các bài toán học máy thông thường sẽ dẫn đến hiện tượng "Rò rỉ dữ liệu" (Data Leakage) — khi mô hình "nhìn thấy" thông tin của tương lai để dự báo quá khứ, khiến kết quả kiểm thử cao ảo tưởng nhưng thất bại trong thực tế.
+Để khắc phục, kỹ thuật Time-series Split được áp dụng bằng cách bảo toàn tính trật tự thời gian. Tập huấn luyện (Train set) sẽ bao gồm các dữ liệu trong quá khứ liên tục, và tập kiểm thử (Test set) sẽ là chuỗi dữ liệu trong tương lai kế tiếp. Điều này mô phỏng chính xác môi trường vận hành thực tế của mô hình: chỉ được phép dùng thông tin của ngày hôm qua để dự đoán ngày mai.
+
+--------------------------------------------------------------------------------
+
+[Bổ sung vào Chương 2 - Mục 2.2.1. Thiết kế kiến trúc]
+
+* Kiến trúc Hệ thống AI Kép (Dual-AI Architecture)
+Trong thiết kế kiến trúc AI của hệ thống, thay vì sử dụng một mô hình đơn lẻ độc lập, dự án áp dụng chiến lược "Kiến trúc AI Kép" (Dual-AI) hoạt động tương hỗ trên hai tầng song song:
+1. Tầng Vĩ mô (Macro Filter): Sử dụng mô hình LightGBM Classifier để dự báo xu hướng T+5 của chỉ số VN-Index. Tầng này đóng vai trò như một "tấm khiên" (Market Shield), định hướng mức độ rủi ro chung của toàn thị trường.
+2. Tầng Vi mô (Micro Selector): Sử dụng mô hình Stacking Ensemble (kết hợp LightGBM và XGBoost Regressor) để chấm điểm và xếp hạng (Ranking) tiềm năng vượt trội của hàng nghìn cổ phiếu riêng lẻ.
+Sự kết hợp này giải quyết được bài toán hóc búa nhất trong giao dịch định lượng: "Mô hình vi mô tìm kiếm cơ hội lợi nhuận, trong khi mô hình vĩ mô chịu trách nhiệm quản trị rủi ro hệ thống". Kết quả đầu ra là sự đồng bộ tín hiệu: nhà đầu tư chỉ giải ngân vào top cổ phiếu có điểm số cao nhất (Tầng 2) khi thị trường chung được dự báo ở trạng thái an toàn (Tầng 1).
+================================================================================

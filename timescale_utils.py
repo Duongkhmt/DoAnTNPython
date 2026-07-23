@@ -78,25 +78,25 @@ class DatabaseManager:
             return True
         temp = f"{table_name}_tmp_{uuid.uuid4().hex[:8]}"
         try:
-            df.to_sql(temp, self.engine, if_exists='replace', index=False)
-            columns = ", ".join(df.columns)
-            update_cols = [c for c in df.columns if c not in conflict_cols]
-
-            if update_cols:
-                updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
-                sql = f"""
-                INSERT INTO {table_name} ({columns})
-                SELECT {columns} FROM {temp}
-                ON CONFLICT ({", ".join(conflict_cols)})
-                DO UPDATE SET {updates};
-                """
-            else:
-                sql = f"""
-                INSERT INTO {table_name} ({columns})
-                SELECT {columns} FROM {temp}
-                ON CONFLICT ({", ".join(conflict_cols)}) DO NOTHING;
-                """
             with self.engine.connect() as conn:
+                df.to_sql(temp, conn, if_exists='replace', index=False)
+                columns = ", ".join(df.columns)
+                update_cols = [c for c in df.columns if c not in conflict_cols]
+
+                if update_cols:
+                    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+                    sql = f"""
+                    INSERT INTO {table_name} ({columns})
+                    SELECT {columns} FROM {temp}
+                    ON CONFLICT ({", ".join(conflict_cols)})
+                    DO UPDATE SET {updates};
+                    """
+                else:
+                    sql = f"""
+                    INSERT INTO {table_name} ({columns})
+                    SELECT {columns} FROM {temp}
+                    ON CONFLICT ({", ".join(conflict_cols)}) DO NOTHING;
+                    """
                 conn.execute(text(sql))
                 conn.execute(text(f"DROP TABLE IF EXISTS {temp}"))
                 if hasattr(conn, 'commit'): conn.commit()
